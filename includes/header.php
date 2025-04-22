@@ -97,7 +97,7 @@ $base = isset($base_path) ? $base_path : $base_url;
             <a href="<?php echo $base; ?>/contact.php" class="drawer-item">Contact</a>
             
             <div class="drawer-cta">
-                <a href="<?php echo $base; ?>/contact.php" class="btn btn-primary">Book Consultation</a>
+                <a href="<?php echo $base; ?>/book-service.php" class="btn btn-primary">Book Service </a>
                 <?php if(isset($_SESSION['user_id'])): ?>
                 <div class="drawer-profile">
                     <a href="<?php echo $base; ?>/dashboard.php" class="drawer-profile-link">Dashboard</a>
