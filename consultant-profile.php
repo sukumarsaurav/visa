@@ -146,12 +146,16 @@ if (isset($_GET['date']) && !empty($_GET['date'])) {
     // Validate date format
     $date_obj = DateTime::createFromFormat('Y-m-d', $selected_date);
     if ($date_obj && $date_obj->format('Y-m-d') === $selected_date) {
-        // Date is valid, fetch slots
+        // Fetch time slots for this date and mode, considering availability
         $slots_query = "SELECT ts.id, ts.start_time, ts.end_time, ts.is_booked
                        FROM time_slots ts
+                       INNER JOIN consultant_availability ca ON ts.availability_id = ca.id
                        WHERE ts.professional_id = ? 
                        AND ts.date = ? 
-                       AND ts.service_mode_id = ?";
+                       AND ts.service_mode_id = ?
+                       AND ca.is_available = 1
+                       ORDER BY ts.start_time ASC";
+        
         $stmt = $conn->prepare($slots_query);
         $stmt->bind_param("isi", $professional_id, $selected_date, $selected_mode);
         $stmt->execute();
@@ -159,6 +163,11 @@ if (isset($_GET['date']) && !empty($_GET['date'])) {
         
         while ($slot = $slots_result->fetch_assoc()) {
             $available_slots[] = $slot;
+        }
+
+        // If no slots are found, show a message
+        if (empty($available_slots)) {
+            $error_message = "No time slots are available for this date. Please select another date or contact the professional.";
         }
     }
 }

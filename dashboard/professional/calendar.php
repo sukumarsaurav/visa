@@ -25,47 +25,170 @@ $num_days = date('t', $first_day);
 // Get day of the week for the first day (0 = Sunday, 6 = Saturday)
 $day_of_week = date('w', $first_day);
 
+// Database connection
+require_once '../../config/db_connect.php';
+require_once '../../includes/functions.php';
+
+// Get service types and modes for the form
+$service_types_query = "SELECT st.* FROM service_types st 
+                       INNER JOIN professional_services ps ON st.id = ps.service_type_id
+                       WHERE ps.professional_id = ? AND ps.is_offered = 1 AND st.is_active = 1";
+$stmt = $conn->prepare($service_types_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$service_types_result = $stmt->get_result();
+$service_types = [];
+while ($type = $service_types_result->fetch_assoc()) {
+    $service_types[] = $type;
+}
+
 // Handle time slot creation if form submitted
 $success_message = '';
 $error_message = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_slots'])) {
-    // Process time slot creation
-    $success_message = "Time slots created successfully!";
+    $date = $_POST['date'];
+    $start_time = $_POST['start_time'];
+    $end_time = $_POST['end_time'];
+    $slot_duration = $_POST['slot_duration'];
+    
+    try {
+        // Start transaction
+        $conn->begin_transaction();
+        
+        // First, create or get availability record
+        $avail_query = "INSERT INTO consultant_availability (professional_id, date, is_available) 
+                       VALUES (?, ?, 1) 
+                       ON DUPLICATE KEY UPDATE is_available = 1";
+        $stmt = $conn->prepare($avail_query);
+        $stmt->bind_param("is", $user_id, $date);
+        $stmt->execute();
+        
+        // Get availability ID
+        $avail_id_query = "SELECT id FROM consultant_availability 
+                          WHERE professional_id = ? AND date = ?";
+        $stmt = $conn->prepare($avail_id_query);
+        $stmt->bind_param("is", $user_id, $date);
+        $stmt->execute();
+        $avail_result = $stmt->get_result();
+        $availability_id = $avail_result->fetch_assoc()['id'];
+        
+        // Get all service modes available for the professional's service types
+        $modes_query = "SELECT DISTINCT sm.id 
+                       FROM service_modes sm
+                       INNER JOIN service_type_modes stm ON sm.id = stm.service_mode_id
+                       INNER JOIN professional_services ps ON stm.service_type_id = ps.service_type_id
+                       WHERE ps.professional_id = ? 
+                       AND ps.is_offered = 1 
+                       AND sm.is_active = 1
+                       AND stm.is_included = 1";
+        $stmt = $conn->prepare($modes_query);
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $modes_result = $stmt->get_result();
+        $service_modes = [];
+        while ($mode = $modes_result->fetch_assoc()) {
+            $service_modes[] = $mode['id'];
+        }
+        
+        // Generate time slots
+        $start = new DateTime($date . ' ' . $start_time);
+        $end = new DateTime($date . ' ' . $end_time);
+        $interval = new DateInterval('PT' . $slot_duration . 'M');
+        
+        $insert_slot_query = "INSERT INTO time_slots 
+                            (professional_id, availability_id, date, start_time, end_time, service_mode_id, is_booked) 
+                            VALUES (?, ?, ?, ?, ?, ?, 0)
+                            ON DUPLICATE KEY UPDATE is_booked = is_booked"; // Keep existing booking status
+        $stmt = $conn->prepare($insert_slot_query);
+        
+        while ($start < $end) {
+            $slot_start = $start->format('H:i:s');
+            $start->add($interval);
+            $slot_end = $start->format('H:i:s');
+            
+            // Create a slot for each service mode
+            foreach ($service_modes as $mode_id) {
+                $stmt->bind_param("iisssi", 
+                    $user_id, 
+                    $availability_id, 
+                    $date, 
+                    $slot_start, 
+                    $slot_end, 
+                    $mode_id
+                );
+                $stmt->execute();
+            }
+        }
+        
+        $conn->commit();
+        $success_message = "Time slots created successfully!";
+    } catch (Exception $e) {
+        $conn->rollback();
+        $error_message = "Error creating time slots: " . $e->getMessage();
+    }
 }
 
-// Process removing availability if requested
+// Process removing availability
 if (isset($_GET['action']) && $_GET['action'] === 'remove' && isset($_GET['date'])) {
     $date = $_GET['date'];
-    // Remove availability for this date
-    // removeAvailability($user_id, $date);
+    
+    // Update consultant_availability to mark day as unavailable
+    $stmt = $conn->prepare("UPDATE consultant_availability SET is_available = 0 WHERE professional_id = ? AND date = ?");
+    $stmt->bind_param("is", $user_id, $date);
+    $stmt->execute();
     
     // Redirect to remove query params
     header("Location: calendar.php?month=$month&year=$year");
     exit();
 }
 
-// Get booked appointments - would come from the database
-$appointments = [
-    '2023-07-10 10:00:00' => [
-        'client_name' => 'John Doe',
-        'service_type' => 'Consultation',
-        'service_mode' => 'Video Call'
-    ],
-    '2023-07-15 14:30:00' => [
-        'client_name' => 'Jane Smith',
-        'service_type' => 'Document Review',
-        'service_mode' => 'Video Call'
-    ]
-];
+// Get available days and booked slots
+$available_days_query = "SELECT DISTINCT ca.date 
+                        FROM consultant_availability ca
+                        WHERE ca.professional_id = ? 
+                        AND ca.is_available = 1 
+                        AND ca.date >= CURDATE()";
+$stmt = $conn->prepare($available_days_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$available_days = [];
+while ($row = $result->fetch_assoc()) {
+    $available_days[] = $row['date'];
+}
 
-// Get available days - would come from the database
-$available_days = [
-    '2023-07-05', '2023-07-06', '2023-07-07',
-    '2023-07-10', '2023-07-11', '2023-07-12', '2023-07-13', '2023-07-14',
-    '2023-07-17', '2023-07-18', '2023-07-19', '2023-07-20', '2023-07-21',
-    '2023-07-24', '2023-07-25', '2023-07-26', '2023-07-27', '2023-07-28'
-];
+// Get booked appointments with time slot status
+$appointments_query = "SELECT b.*, u.name as client_name, st.name as service_type, sm.name as service_mode,
+                      ts.date, ts.start_time, ts.end_time, ts.is_booked,
+                      (SELECT COUNT(*) FROM time_slots ts2 
+                       WHERE ts2.professional_id = ts.professional_id 
+                       AND ts2.date = ts.date 
+                       AND ts2.start_time = ts.start_time 
+                       AND ts2.is_booked = 1) as total_booked_modes
+                      FROM bookings b
+                      INNER JOIN users u ON b.client_id = u.id
+                      INNER JOIN service_types st ON b.service_type_id = st.id
+                      INNER JOIN service_modes sm ON b.service_mode_id = sm.id
+                      INNER JOIN time_slots ts ON b.time_slot_id = ts.id
+                      WHERE b.professional_id = ? 
+                      AND ts.date >= CURDATE()
+                      AND b.status != 'cancelled'
+                      ORDER BY ts.date, ts.start_time";
+$stmt = $conn->prepare($appointments_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$appointments = [];
+while ($row = $result->fetch_assoc()) {
+    $key = $row['date'] . ' ' . $row['start_time'];
+    $appointments[$key] = [
+        'client_name' => $row['client_name'],
+        'service_type' => $row['service_type'],
+        'service_mode' => $row['service_mode'],
+        'is_fully_booked' => $row['total_booked_modes'] > 0 // If any mode is booked, slot is unavailable
+    ];
+}
 ?>
 
 <!DOCTYPE html>
@@ -203,30 +326,18 @@ $available_days = [
                     </div>
                     
                     <div class="form-group">
-                        <label for="service_mode">Service Mode</label>
-                        <select id="service_mode" name="service_mode_id" class="form-control" required>
-                            <option value="">-- Select Mode --</option>
-                            <option value="1">Chat</option>
-                            <option value="2">Video Call</option>
-                            <option value="3">Phone Call</option>
-                            <option value="4">Email</option>
-                            <option value="5">Document Review</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
                         <label for="slot_duration">Slot Duration (minutes)</label>
                         <select id="slot_duration" name="slot_duration" class="form-control" required>
                             <option value="30">30 minutes</option>
                             <option value="60" selected>1 hour</option>
-                            <option value="90">1 hour 30 minutes</option>
+                            <option value="90">1.5 hours</option>
                             <option value="120">2 hours</option>
                         </select>
                     </div>
                     
                     <div class="form-actions">
                         <button type="submit" name="create_slots" class="button">Create Time Slots</button>
-                        <button type="button" id="cancelAvailability" class="button button-secondary">Cancel</button>
+                        <button type="button" onclick="hideAvailabilityForm()" class="button button-secondary">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -363,13 +474,15 @@ $available_days = [
     </div>
     
     <script>
-        document.getElementById('addAvailabilityBtn').addEventListener('click', function() {
+        function showAvailabilityForm() {
             document.getElementById('availabilityFormContainer').style.display = 'block';
-        });
+        }
         
-        document.getElementById('cancelAvailability').addEventListener('click', function() {
+        function hideAvailabilityForm() {
             document.getElementById('availabilityFormContainer').style.display = 'none';
-        });
+        }
+        
+        document.getElementById('addAvailabilityBtn').addEventListener('click', showAvailabilityForm);
         
         // Set date for quick availability setting
         document.querySelectorAll('.set-availability').forEach(link => {
