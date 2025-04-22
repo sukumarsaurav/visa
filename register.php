@@ -180,6 +180,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
     // For professional - step 3 (specializations and languages)
     else if (isset($_POST['register_step3']) && isset($_SESSION['registration'])) {
+        // Enable error logging for debugging
+        ini_set('display_errors', 1);
+        error_reporting(E_ALL);
+        
         $registration = $_SESSION['registration'];
         
         $specializations = isset($_POST['specializations']) ? $_POST['specializations'] : [];
@@ -194,7 +198,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $email = $registration['email'];
             $password = $registration['password'];
             $user_type = $registration['user_type'];
-            $google_data = $registration['google_data'];
+            $google_data = isset($registration['google_data']) ? $registration['google_data'] : null;
             $professional = $registration['professional'];
             
             $hashed_password = $google_data ? null : password_hash($password, PASSWORD_DEFAULT);
@@ -287,6 +291,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             } catch (Exception $e) {
                 $conn->rollback();
                 $error = "Registration failed: " . $e->getMessage();
+                
+                // Log the error to a file
+                $log_dir = dirname(__FILE__) . '/logs';
+                if (!file_exists($log_dir)) {
+                    mkdir($log_dir, 0777, true);
+                }
+                file_put_contents($log_dir . '/registration_errors.log', 
+                    date('Y-m-d H:i:s') . " - Registration error: " . $e->getMessage() . "\n" . 
+                    "User: $email, Type: Professional\n" . 
+                    "Trace: " . $e->getTraceAsString() . "\n\n", 
+                    FILE_APPEND
+                );
             }
         }
     }
@@ -438,6 +454,11 @@ if ($user_type == 'professional' && $step == 3) {
                                     </div>
                                     <?php endforeach; ?>
                                 </div>
+                                <?php if (empty($specializations)): ?>
+                                    <div class="alert alert-warning">
+                                        No specializations available. Please contact the administrator.
+                                    </div>
+                                <?php endif; ?>
                             </div>
                             
                             <div class="form-group">
@@ -452,6 +473,11 @@ if ($user_type == 'professional' && $step == 3) {
                                     </div>
                                     <?php endforeach; ?>
                                 </div>
+                                <?php if (empty($languages)): ?>
+                                    <div class="alert alert-warning">
+                                        No languages available. Please contact the administrator.
+                                    </div>
+                                <?php endif; ?>
                             </div>
                             
                             <div class="register-nav">
@@ -490,6 +516,7 @@ if ($user_type == 'professional' && $step == 3) {
                     </form>
                 <?php endif; ?>
                 
+                <?php if (!$success): // Only show alternative login options if not showing success message ?>
                 <div class="auth-divider">
                     <span>OR</span>
                 </div>
@@ -512,6 +539,7 @@ if ($user_type == 'professional' && $step == 3) {
                 <a href="<?php echo $google_auth_url; ?>" class="social-login-btn">
                     <i class="fab fa-google"></i> Sign up with Google
                 </a>
+                <?php endif; ?>
                 
                 <div class="auth-footer">
                     <p>Already have an account? <a href="login.php">Login here</a></p>
