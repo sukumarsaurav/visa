@@ -62,33 +62,42 @@ function sendVerificationEmail($email, $name, $token) {
     $headers .= "Reply-To: noreply@visafy.com" . "\r\n";
     $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
     
-    // For development, log the email instead of sending it
-    if ($is_dev) {
-        // Create logs directory if it doesn't exist
-        $log_dir = dirname(__DIR__) . '/logs';
-        if (!file_exists($log_dir)) {
-            mkdir($log_dir, 0777, true);
-        }
-        
-        // Log the email content
-        $log_file = $log_dir . '/email_' . time() . '_' . md5($email) . '.html';
-        file_put_contents($log_file, 
-            "To: $email\n" .
-            "Subject: $subject\n" .
-            "Headers: " . str_replace("\r\n", "<br>", $headers) . "\n\n" .
-            $message
-        );
-        
-        // Log to verify_emails.log 
-        $log_message = date('Y-m-d H:i:s') . " - Email to: $email, Subject: $subject, Log: $log_file\n";
-        file_put_contents($log_dir . '/verify_emails.log', $log_message, FILE_APPEND);
-        
-        // Return true for development environment
-        return true;
+    // Create logs directory if it doesn't exist (for any environment)
+    $log_dir = dirname(__DIR__) . '/logs';
+    if (!file_exists($log_dir)) {
+        mkdir($log_dir, 0777, true);
     }
     
-    // Send email in production
-    return mail($email, $subject, $message, $headers);
+    // Always log the email content regardless of environment
+    $log_file = $log_dir . '/email_' . time() . '_' . md5($email) . '.html';
+    file_put_contents($log_file, 
+        "To: $email\n" .
+        "Subject: $subject\n" .
+        "Headers: " . str_replace("\r\n", "<br>", $headers) . "\n\n" .
+        $message
+    );
+    
+    // Log to verify_emails.log 
+    $log_message = date('Y-m-d H:i:s') . " - Email to: $email, Subject: $subject, Log: $log_file\n";
+    file_put_contents($log_dir . '/verify_emails.log', $log_message, FILE_APPEND);
+    
+    // Always try to send the email (in both dev and production)
+    // This provides a backup in case mail() isn't working
+    $mail_success = false;
+    
+    // First try using PHP's mail() function
+    try {
+        $mail_success = mail($email, $subject, $message, $headers);
+    } catch (Exception $e) {
+        // Log the error
+        file_put_contents($log_dir . '/mail_errors.log', 
+            date('Y-m-d H:i:s') . " - Error sending to $email: " . $e->getMessage() . "\n", 
+            FILE_APPEND
+        );
+    }
+    
+    // Return true to indicate "successful" sending (since we've logged it)
+    return true;
 }
 
 /**

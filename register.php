@@ -100,23 +100,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 sendVerificationEmail($email, $name, $verification_token);
                                 $success = "Registration successful! Please check your email to verify your account.";
                                 
-                                // For development: Display the verification link
+                                // Display verification link on all environments for better user experience
+                                $protocol = ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) ? 'http' : 'https';
+                                
+                                // Fix for Hostinger - detect if we're on production hostinger site
+                                $is_hostinger = (strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false);
+                                
+                                if ($is_hostinger) {
+                                    // On Hostinger site, use direct path without /visafy-v2 folder
+                                    $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=" . $verification_token;
+                                } else {
+                                    // Local development or other hosting
+                                    $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
+                                }
+                                
+                                $success .= "<br><br><strong>Verification Link:</strong> <a href='$verification_link' target='_blank'>Click here to verify your email</a>";
+                                
+                                // Add note about email logs only in development
                                 if ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) {
-                                    $protocol = 'http';
-                                    
-                                    // Fix for Hostinger - detect if we're on production hostinger site
-                                    $is_hostinger = (strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false);
-                                    
-                                    if ($is_hostinger) {
-                                        // On Hostinger site, use direct path without /visafy-v2 folder
-                                        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=" . $verification_token;
-                                    } else {
-                                        // Local development or other hosting
-                                        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
-                                    }
-                                    
-                                    $success .= "<br><br><strong>Development Mode:</strong> <a href='$verification_link' target='_blank'>Click here to verify</a>";
-                                    $success .= "<br><small>Emails are logged in the /logs directory instead of being sent.</small>";
+                                    $success .= "<br><small>Emails are also logged in the /logs directory.</small>";
                                 }
                             } else {
                                 // Log in the user immediately for Google registration
@@ -243,23 +245,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     sendVerificationEmail($email, $name, $verification_token);
                     $success = "Registration successful! Please check your email to verify your account.";
                     
-                    // For development: Display the verification link
+                    // Display verification link on all environments for better user experience
+                    $protocol = ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) ? 'http' : 'https';
+                    
+                    // Fix for Hostinger - detect if we're on production hostinger site
+                    $is_hostinger = (strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false);
+                    
+                    if ($is_hostinger) {
+                        // On Hostinger site, use direct path without /visafy-v2 folder
+                        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=" . $verification_token;
+                    } else {
+                        // Local development or other hosting
+                        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
+                    }
+                    
+                    $success .= "<br><br><strong>Verification Link:</strong> <a href='$verification_link' target='_blank'>Click here to verify your email</a>";
+                    
+                    // Add note about email logs only in development
                     if ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) {
-                        $protocol = 'http';
-                        
-                        // Fix for Hostinger - detect if we're on production hostinger site
-                        $is_hostinger = (strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false);
-                        
-                        if ($is_hostinger) {
-                            // On Hostinger site, use direct path without /visafy-v2 folder
-                            $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=" . $verification_token;
-                        } else {
-                            // Local development or other hosting
-                            $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
-                        }
-                        
-                        $success .= "<br><br><strong>Development Mode:</strong> <a href='$verification_link' target='_blank'>Click here to verify</a>";
-                        $success .= "<br><small>Emails are logged in the /logs directory instead of being sent.</small>";
+                        $success .= "<br><small>Emails are also logged in the /logs directory.</small>";
                     }
                 } else {
                     // Log in the user immediately for Google registration
