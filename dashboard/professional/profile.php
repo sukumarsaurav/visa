@@ -267,89 +267,169 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile'])) {
         // Process service types
         if (isset($_POST['service_types']) && is_array($_POST['service_types'])) {
             foreach ($_POST['service_types'] as $service_type_id) {
-                $custom_price = isset($_POST['service_price_' . $service_type_id]) ? 
-                               $_POST['service_price_' . $service_type_id] : 0;
-                $service_description = isset($_POST['service_desc_' . $service_type_id]) ? 
-                                     $_POST['service_desc_' . $service_type_id] : '';
+                $service_type_id = intval($service_type_id); // Ensure it's an integer
                 
-                // Check if service already exists for this professional
-                if (isset($existing_services[$service_type_id])) {
-                    // Update existing service
-                    $stmt = $conn->prepare("
-                        UPDATE professional_services 
-                        SET custom_price = ?, service_description = ?, is_offered = 1
-                        WHERE id = ?
-                    ");
-                    $stmt->bind_param("dsi", $custom_price, $service_description, $existing_services[$service_type_id]);
-                    $stmt->execute();
-                    
-                    // Remove from existing services array to track which ones to set as not offered
-                    unset($existing_services[$service_type_id]);
-                } else {
-                    // Insert new service
-                    $stmt = $conn->prepare("
-                        INSERT INTO professional_services 
-                        (professional_id, service_type_id, custom_price, service_description, is_offered)
-                        VALUES (?, ?, ?, ?, 1)
-                    ");
-                    $stmt->bind_param("idds", $user_id, $service_type_id, $custom_price, $service_description);
-                    $stmt->execute();
-                    
-                    $professional_service_id = $conn->insert_id;
-                } 
-                
-                // Process service modes for this service type
-                $service_mode_ids = [];
-                $stmt = $conn->prepare("
-                    SELECT service_mode_id FROM service_type_modes
-                    WHERE service_type_id = ? AND is_included = 1
-                ");
-                $stmt->bind_param("i", $service_type_id);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
-                    $service_mode_ids[] = $row['service_mode_id'];
+                if ($service_type_id <= 0) {
+                    continue; // Skip invalid service type IDs
                 }
                 
-                // Now handle each mode's pricing
-                foreach ($service_mode_ids as $mode_id) {
-                    $mode_key = $service_type_id . '_' . $mode_id;
-                    $is_mode_offered = isset($_POST['service_mode_' . $mode_key]) ? 1 : 0;
-                    $additional_fee = isset($_POST['fee_' . $mode_key]) ? $_POST['fee_' . $mode_key] : 0;
-                    
-                    // Get the professional_service_id (either existing or newly created)
-                    $prof_service_id = isset($existing_services[$service_type_id]) ? 
-                                     $existing_services[$service_type_id] : $professional_service_id;
-                    
-                    // Check if pricing entry exists
-                    $stmt = $conn->prepare("
-                        SELECT id FROM professional_service_mode_pricing
-                        WHERE professional_service_id = ? AND service_mode_id = ?
-                    ");
-                    $stmt->bind_param("ii", $prof_service_id, $mode_id);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-                    
-                    if ($result->num_rows > 0) {
-                        // Update existing pricing entry
-                        $pricing_id = $result->fetch_assoc()['id'];
+                $custom_price = isset($_POST['service_price_' . $service_type_id]) ? 
+                               floatval($_POST['service_price_' . $service_type_id]) : 0;
+                $service_description = isset($_POST['service_desc_' . $service_type_id]) ? 
+                                     trim($_POST['service_desc_' . $service_type_id]) : '';
+                
+                try {
+                    // Check if service already exists for this professional
+                    if (isset($existing_services[$service_type_id])) {
+                        // Update existing service
                         $stmt = $conn->prepare("
-                            UPDATE professional_service_mode_pricing
-                            SET is_offered = ?, additional_fee = ?
+                            UPDATE professional_services 
+                            SET custom_price = ?, service_description = ?, is_offered = 1
                             WHERE id = ?
                         ");
-                        $stmt->bind_param("idi", $is_mode_offered, $additional_fee, $pricing_id);
+                        $stmt->bind_param("dsi", $custom_price, $service_description, $existing_services[$service_type_id]);
                         $stmt->execute();
+                        
+                        $professional_service_id = $existing_services[$service_type_id];
+                        
+                        // Remove from existing services array to track which ones to set as not offered
+                        unset($existing_services[$service_type_id]);
                     } else {
-                        // Insert new pricing entry
+                        // Insert new service
                         $stmt = $conn->prepare("
-                            INSERT INTO professional_service_mode_pricing
-                            (professional_service_id, service_mode_id, is_offered, additional_fee)
-                            VALUES (?, ?, ?, ?)
+                            INSERT INTO professional_services 
+                            (professional_id, service_type_id, custom_price, service_description, is_offered)
+                            VALUES (?, ?, ?, ?, 1)
                         ");
-                        $stmt->bind_param("iiid", $prof_service_id, $mode_id, $is_mode_offered, $additional_fee);
+                        $stmt->bind_param("idds", $user_id, $service_type_id, $custom_price, $service_description);
                         $stmt->execute();
+                        
+                        $professional_service_id = $conn->insert_id;
                     }
+                    
+                    // Process service modes for this service type
+                    $service_mode_ids = [];
+                    try {
+                        $stmt = $conn->prepare("
+                            SELECT service_mode_id FROM service_type_modes
+                            WHERE service_type_id = ? AND is_included = 1
+                        ");
+                        $stmt->bind_param("i", $service_type_id);
+                        $stmt->execute();
+                        $result = $stmt->get_result();
+                        
+                        while ($row = $result->fetch_assoc()) {
+                            $service_mode_ids[] = $row['service_mode_id'];
+                        }
+                        
+                        // If service_mode_ids is empty, this may be a service that doesn't have modes defined in the service_type_modes table
+                        // Default to all active service modes as a fallback
+                        if (empty($service_mode_ids)) {
+                            // Look up the service type name
+                            $stmt = $conn->prepare("SELECT name FROM service_types WHERE id = ?");
+                            $stmt->bind_param("i", $service_type_id);
+                            $stmt->execute();
+                            $service_type_result = $stmt->get_result();
+                            $service_type_name = '';
+                            
+                            if ($service_type_result->num_rows > 0) {
+                                $service_type_name = $service_type_result->fetch_assoc()['name'];
+                            }
+                            
+                            // Get appropriate modes based on service type
+                            $stmt = $conn->prepare("SELECT id, name FROM service_modes WHERE is_active = 1");
+                            $stmt->execute();
+                            $result = $stmt->get_result();
+                            $all_modes = [];
+                            
+                            while ($row = $result->fetch_assoc()) {
+                                $all_modes[$row['name']] = $row['id'];
+                            }
+                            
+                            // Apply rules based on service type name
+                            if ($service_type_name === 'DIY') {
+                                // DIY typically uses Document Review mode
+                                if (isset($all_modes['Document Review'])) {
+                                    $service_mode_ids[] = $all_modes['Document Review'];
+                                }
+                            } elseif ($service_type_name === 'Consultation') {
+                                // Consultation typically uses all communication modes
+                                $comm_modes = ['Chat', 'Video Call', 'Phone Call', 'Email'];
+                                foreach ($comm_modes as $mode_name) {
+                                    if (isset($all_modes[$mode_name])) {
+                                        $service_mode_ids[] = $all_modes[$mode_name];
+                                    }
+                                }
+                            } else {
+                                // For any other service type, include all modes
+                                $service_mode_ids = array_values($all_modes);
+                            }
+                        }
+                    } catch (Exception $e) {
+                        error_log("Error getting service modes: " . $e->getMessage() . " (service_type_id: $service_type_id)");
+                        // If we can't get service modes, we can't proceed with this service
+                        continue;
+                    }
+                    
+                    // Now handle each mode's pricing
+                    foreach ($service_mode_ids as $mode_id) {
+                        $mode_key = $service_type_id . '_' . $mode_id;
+                        $is_mode_offered = isset($_POST['service_mode_' . $mode_key]) ? 1 : 0;
+                        $additional_fee = isset($_POST['fee_' . $mode_key]) ? $_POST['fee_' . $mode_key] : 0;
+                        
+                        // Get the professional_service_id (either existing or newly created)
+                        // Ensure $professional_service_id is defined
+                        $professional_service_id = $professional_service_id ?? 0;
+                        $prof_service_id = isset($existing_services[$service_type_id]) ? 
+                                         $existing_services[$service_type_id] : $professional_service_id;
+                        
+                        // Skip if professional service ID is invalid
+                        if ($prof_service_id <= 0) {
+                            continue;
+                        }
+                        
+                        try {
+                            // Check if pricing entry exists
+                            $stmt = $conn->prepare("
+                                SELECT id FROM professional_service_mode_pricing
+                                WHERE professional_service_id = ? AND service_mode_id = ?
+                            ");
+                            $stmt->bind_param("ii", $prof_service_id, $mode_id);
+                            $stmt->execute();
+                            $result = $stmt->get_result();
+                            
+                            if ($result->num_rows > 0) {
+                                // Update existing pricing entry
+                                $pricing_id = $result->fetch_assoc()['id'];
+                                $stmt = $conn->prepare("
+                                    UPDATE professional_service_mode_pricing
+                                    SET is_offered = ?, additional_fee = ?
+                                    WHERE id = ?
+                                ");
+                                $stmt->bind_param("idi", $is_mode_offered, $additional_fee, $pricing_id);
+                                $stmt->execute();
+                            } else {
+                                // Insert new pricing entry
+                                $stmt = $conn->prepare("
+                                    INSERT INTO professional_service_mode_pricing
+                                    (professional_service_id, service_mode_id, is_offered, additional_fee)
+                                    VALUES (?, ?, ?, ?)
+                                ");
+                                $stmt->bind_param("iiid", $prof_service_id, $mode_id, $is_mode_offered, $additional_fee);
+                                $stmt->execute();
+                            }
+                        } catch (Exception $e) {
+                            error_log("Error processing service mode pricing: " . $e->getMessage() . 
+                                     " (service_type_id: $service_type_id, mode_id: $mode_id, prof_service_id: $prof_service_id)");
+                            // Continue with next mode instead of failing the entire transaction
+                            continue;
+                        }
+                    }
+                } catch (Exception $e) {
+                    error_log("Error processing service: " . $e->getMessage() . 
+                             " (service_type_id: $service_type_id)");
+                    // Continue with next service instead of failing the entire transaction
+                    continue;
                 }
             }
         }
@@ -374,9 +454,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile'])) {
         // Rollback transaction on error
         $conn->rollback();
         error_log("Update Error: " . $e->getMessage());
-        $error_message = "Failed to update profile. Please try again.";
+        $error_message = "Failed to update profile: " . $e->getMessage();
     }
 }
+
+// Enable detailed error logging for development
+// Remove in production
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 ?>
 
 <!DOCTYPE html>

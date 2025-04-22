@@ -205,19 +205,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_slot'])) {
         if (!$slot_data || $slot_data['is_booked']) {
             $error_message = "Sorry, this time slot is no longer available.";
         } else {
-            // Create booking
-            $stmt = $conn->prepare("INSERT INTO bookings (professional_id, client_id, time_slot_id, service_type_id, service_mode_id, status, price, payment_status) VALUES (?, ?, ?, ?, ?, 'pending', ?, 'unpaid')");
-            $stmt->bind_param("iiiiid", $professional_id, $user_id, $slot_id, $service_id, $mode_id, $price);
+            // First check if the professional offers this service type and mode
+            $check_service_query = "SELECT COUNT(*) as service_count
+                                    FROM professional_services ps
+                                    LEFT JOIN professional_service_mode_pricing psmp 
+                                    ON ps.id = psmp.professional_service_id AND psmp.service_mode_id = ?
+                                    WHERE ps.professional_id = ? 
+                                    AND ps.service_type_id = ?
+                                    AND ps.is_offered = 1
+                                    AND (psmp.is_offered = 1 OR psmp.is_offered IS NULL)";
+                                    
+            $stmt = $conn->prepare($check_service_query);
+            $stmt->bind_param("iii", $mode_id, $professional_id, $service_id);
+            $stmt->execute();
+            $check_service_result = $stmt->get_result();
+            $service_check = $check_service_result->fetch_assoc();
             
-            if ($stmt->execute()) {
-                $booking_id = $conn->insert_id;
-                $success_message = "Your appointment has been scheduled. Please proceed to payment to confirm.";
-                
-                // Redirect to payment page (in a real app)
-                // header("Location: payment.php?booking_id=" . $booking_id);
-                // exit();
+            if ($service_check['service_count'] == 0) {
+                $error_message = "This professional does not offer this service type or mode. Please select a different option.";
             } else {
-                $error_message = "There was an error booking your appointment. Please try again.";
+                try {
+                    // Start transaction
+                    $conn->begin_transaction();
+                    
+                    // Create booking
+                    $stmt = $conn->prepare("INSERT INTO bookings (professional_id, client_id, time_slot_id, service_type_id, service_mode_id, status, price, payment_status) VALUES (?, ?, ?, ?, ?, 'pending', ?, 'unpaid')");
+                    $stmt->bind_param("iiiiid", $professional_id, $user_id, $slot_id, $service_id, $mode_id, $price);
+                    $stmt->execute();
+                    
+                    // Mark the time slot as booked
+                    $update_slot_query = "UPDATE time_slots SET is_booked = 1 WHERE id = ?";
+                    $stmt = $conn->prepare($update_slot_query);
+                    $stmt->bind_param("i", $slot_id);
+                    $stmt->execute();
+                    
+                    // Commit the transaction
+                    $conn->commit();
+                    
+                    $booking_id = $conn->insert_id;
+                    $success_message = "Your appointment has been scheduled. Please proceed to payment to confirm.";
+                    
+                    // Redirect to payment page (in a real app)
+                    // header("Location: payment.php?booking_id=" . $booking_id);
+                    // exit();
+                } catch (Exception $e) {
+                    // Rollback on error
+                    $conn->rollback();
+                    $error_message = "There was an error booking your appointment: " . $e->getMessage();
+                }
             }
         }
     }
