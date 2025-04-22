@@ -223,24 +223,103 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $user_id = $conn->insert_id;
                 
                 // Insert professional data
+                $website = $professional['website'] ?? '';
+                // Based on database schema, years_experience should be an integer
+                $years_exp = (int)$professional['years_experience'];
+                
+                // Debug log - before professional insertion
+                $log_dir = dirname(__FILE__) . '/logs';
+                if (!file_exists($log_dir)) {
+                    mkdir($log_dir, 0777, true);
+                }
+                file_put_contents($log_dir . '/professional_debug.log', 
+                    date('Y-m-d H:i:s') . " - Preparing to insert professional: " . 
+                    "User ID: $user_id, License: {$professional['license_number']}, " . 
+                    "Years: $years_exp, Education: " . substr($professional['education'], 0, 30) . "...\n", 
+                    FILE_APPEND
+                );
+                
                 $stmt = $conn->prepare("INSERT INTO professionals (user_id, license_number, years_experience, education, bio, phone, website) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt->bind_param("isisss", $user_id, $professional['license_number'], $professional['years_experience'], $professional['education'], $professional['bio'], $professional['phone'], $professional['website']);
-                $stmt->execute();
+                
+                // Count the number of ? in the query and compare with the number of types
+                $sql = "INSERT INTO professionals (user_id, license_number, years_experience, education, bio, phone, website) VALUES (?, ?, ?, ?, ?, ?, ?)";
+                $param_count = substr_count($sql, '?');
+                $types = "isisss";
+                $type_count = strlen($types);
+                
+                file_put_contents($log_dir . '/professional_debug.log', 
+                    date('Y-m-d H:i:s') . " - Parameter check: " . 
+                    "SQL parameters: $param_count, Type string length: $type_count\n" . 
+                    "SQL: $sql\n" .
+                    "Types: $types\n", 
+                    FILE_APPEND
+                );
+                
+                // Fix: Adding 's' for website parameter
+                try {
+                    $stmt->bind_param("isissss", $user_id, $professional['license_number'], $years_exp, $professional['education'], $professional['bio'], $professional['phone'], $website);
+                    if (!$stmt->execute()) {
+                        throw new Exception("Failed to insert professional: " . $stmt->error);
+                    }
+                    file_put_contents($log_dir . '/professional_debug.log', 
+                        date('Y-m-d H:i:s') . " - Professional statement executed successfully\n", 
+                        FILE_APPEND
+                    );
+                } catch (Exception $e) {
+                    file_put_contents($log_dir . '/professional_debug.log', 
+                        date('Y-m-d H:i:s') . " - Error executing professional statement: " . $e->getMessage() . "\n", 
+                        FILE_APPEND
+                    );
+                    throw $e; // Re-throw to be caught by the outer try/catch
+                }
+                
                 $professional_id = $conn->insert_id;
                 
-                // Insert specializations
+                // Debug log - after professional insertion
+                file_put_contents($log_dir . '/professional_debug.log', 
+                    date('Y-m-d H:i:s') . " - Professional inserted, ID: $professional_id\n", 
+                    FILE_APPEND
+                );
+                
+                // Insert specializations - make sure we're passing the correct ID value
+                $spec_count = 0;
                 foreach ($specializations as $specialization_id) {
+                    $spec_id = (int)$specialization_id;
                     $stmt = $conn->prepare("INSERT INTO professional_specializations (professional_id, specialization_id) VALUES (?, ?)");
-                    $stmt->bind_param("ii", $professional_id, $specialization_id);
+                    $stmt->bind_param("ii", $professional_id, $spec_id);
                     $stmt->execute();
+                    $spec_count++;
+                    
+                    // Debug log - specialization insertion
+                    file_put_contents($log_dir . '/professional_debug.log', 
+                        date('Y-m-d H:i:s') . " - Added specialization: $spec_id\n", 
+                        FILE_APPEND
+                    );
                 }
                 
-                // Insert languages
+                // Insert languages - make sure we're passing the correct ID value
+                $lang_count = 0;
                 foreach ($languages as $language_id) {
+                    $lang_id = (int)$language_id;
                     $stmt = $conn->prepare("INSERT INTO professional_languages (professional_id, language_id) VALUES (?, ?)");
-                    $stmt->bind_param("ii", $professional_id, $language_id);
+                    $stmt->bind_param("ii", $professional_id, $lang_id);
                     $stmt->execute();
+                    $lang_count++;
+                    
+                    // Debug log - language insertion
+                    file_put_contents($log_dir . '/professional_debug.log', 
+                        date('Y-m-d H:i:s') . " - Added language: $lang_id\n", 
+                        FILE_APPEND
+                    );
                 }
+                
+                // Debug log - summary
+                file_put_contents($log_dir . '/professional_debug.log', 
+                    date('Y-m-d H:i:s') . " - Registration complete: " . 
+                    "Professional ID: $professional_id, " . 
+                    "Added $spec_count specializations and $lang_count languages\n", 
+                    FILE_APPEND
+                );
                 
                 $conn->commit();
                 
