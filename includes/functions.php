@@ -20,8 +20,12 @@ function generateToken($length = 32) {
 function sendVerificationEmail($email, $name, $token) {
     $subject = "Verify Your Email - Visafy";
     
-    // Use HTTPS for secure verification link
-    $verification_link = "https://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $token;
+    // Determine if running in development environment
+    $is_dev = ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false);
+    $protocol = $is_dev ? 'http' : 'https';
+    
+    // Use appropriate protocol for verification link
+    $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $token;
     
     $message = "
     <html>
@@ -45,11 +49,36 @@ function sendVerificationEmail($email, $name, $token) {
     // To send HTML mail, the Content-type header must be set
     $headers = "MIME-Version: 1.0" . "\r\n";
     $headers .= "Content-type:text/html;charset=UTF-8" . "\r\n";
-    $headers .= "From: Visafy <no-reply@" . $_SERVER['HTTP_HOST'] . ">" . "\r\n"; // Use server's hostname for From
-    $headers .= "Reply-To: no-reply@" . $_SERVER['HTTP_HOST'] . "\r\n";
+    $headers .= "From: Visafy <noreply@visafy.com>" . "\r\n";
+    $headers .= "Reply-To: noreply@visafy.com" . "\r\n";
     $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
     
-    // Send email
+    // For development, log the email instead of sending it
+    if ($is_dev) {
+        // Create logs directory if it doesn't exist
+        $log_dir = dirname(__DIR__) . '/logs';
+        if (!file_exists($log_dir)) {
+            mkdir($log_dir, 0777, true);
+        }
+        
+        // Log the email content
+        $log_file = $log_dir . '/email_' . time() . '_' . md5($email) . '.html';
+        file_put_contents($log_file, 
+            "To: $email\n" .
+            "Subject: $subject\n" .
+            "Headers: " . str_replace("\r\n", "<br>", $headers) . "\n\n" .
+            $message
+        );
+        
+        // Log to verify_emails.log 
+        $log_message = date('Y-m-d H:i:s') . " - Email to: $email, Subject: $subject, Log: $log_file\n";
+        file_put_contents($log_dir . '/verify_emails.log', $log_message, FILE_APPEND);
+        
+        // Return true for development environment
+        return true;
+    }
+    
+    // Send email in production
     return mail($email, $subject, $message, $headers);
 }
 

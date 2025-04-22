@@ -1,0 +1,26 @@
+# Ignore log files but keep logs directory
+logs/*
+!logs/.gitkeep
+
+# Ignore configuration files with sensitive data
+config/db_connect.php
+config/google_auth.php
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# PHP dependency directories
+/vendor/
+/node_modules/ 

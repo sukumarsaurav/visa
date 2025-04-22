@@ -99,6 +99,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             if (!$google_data) {
                                 sendVerificationEmail($email, $name, $verification_token);
                                 $success = "Registration successful! Please check your email to verify your account.";
+                                
+                                // For development: Display the verification link
+                                if ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) {
+                                    $protocol = 'http';
+                                    $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
+                                    $success .= "<br><br><strong>Development Mode:</strong> <a href='$verification_link' target='_blank'>Click here to verify</a>";
+                                    $success .= "<br><small>Emails are logged in the /logs directory instead of being sent.</small>";
+                                }
                             } else {
                                 // Log in the user immediately for Google registration
                                 $_SESSION['user_id'] = $user_id;
@@ -223,6 +231,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 if (!$google_data) {
                     sendVerificationEmail($email, $name, $verification_token);
                     $success = "Registration successful! Please check your email to verify your account.";
+                    
+                    // For development: Display the verification link
+                    if ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false) {
+                        $protocol = 'http';
+                        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $verification_token;
+                        $success .= "<br><br><strong>Development Mode:</strong> <a href='$verification_link' target='_blank'>Click here to verify</a>";
+                        $success .= "<br><small>Emails are logged in the /logs directory instead of being sent.</small>";
+                    }
                 } else {
                     // Log in the user immediately for Google registration
                     $_SESSION['user_id'] = $user_id;
