@@ -24,8 +24,17 @@ function sendVerificationEmail($email, $name, $token) {
     $is_dev = ($_SERVER['SERVER_NAME'] == 'localhost' || strpos($_SERVER['SERVER_NAME'], '.local') !== false);
     $protocol = $is_dev ? 'http' : 'https';
     
-    // Use appropriate protocol for verification link
-    $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $token;
+    // Fix for Hostinger - detect if we're on production hostinger site
+    $is_hostinger = (strpos($_SERVER['HTTP_HOST'], 'hostingersite.com') !== false);
+    
+    // Use appropriate protocol and path for verification link
+    if ($is_hostinger) {
+        // On Hostinger site, use direct path without /visafy-v2 folder
+        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=" . $token;
+    } else {
+        // Local development or other hosting
+        $verification_link = $protocol . "://" . $_SERVER['HTTP_HOST'] . "/visafy-v2/verify_email.php?token=" . $token;
+    }
     
     $message = "
     <html>
