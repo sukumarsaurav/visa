@@ -1,4 +1,7 @@
 <?php
+// Start output buffering to prevent "headers already sent" errors
+ob_start();
+
 // Set page variables
 $page_title = "AI Chat";
 $page_header = "Visafy AI Chat";
@@ -52,6 +55,7 @@ $current_month = date('Y-m');
 $chat_type = '';
 $error_message = '';
 $success_message = '';
+$conversation_data = [];
 
 // Check monthly usage
 $usage_query = "SELECT message_count FROM ai_chat_usage 
@@ -70,144 +74,6 @@ if ($usage_result->num_rows > 0) {
     $stmt = $conn->prepare($create_usage);
     $stmt->bind_param("is", $user_id, $current_month);
     $stmt->execute();
-}
-
-// Get user's conversation history
-$history_query = "SELECT c.id, c.title, c.chat_type, c.created_at, c.updated_at,
-                 (SELECT COUNT(*) FROM ai_chat_messages m WHERE m.conversation_id = c.id) as message_count
-                 FROM ai_chat_conversations c
-                 WHERE c.professional_id = ? AND c.deleted_at IS NULL
-                 ORDER BY c.updated_at DESC";
-$stmt = $conn->prepare($history_query);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$history_result = $stmt->get_result();
-
-while ($row = $history_result->fetch_assoc()) {
-    $conversations[] = $row;
-}
-
-// Handle new conversation creation
-if (isset($_GET['new']) && in_array($_GET['type'], ['ircc', 'cases'])) {
-    $chat_type = $_GET['type'];
-    $default_title = ($chat_type == 'ircc') ? 'IRCC Rules and Regulations' : 'Case Laws Research';
-    
-    $create_query = "INSERT INTO ai_chat_conversations (professional_id, title, chat_type) 
-                    VALUES (?, ?, ?)";
-    $stmt = $conn->prepare($create_query);
-    $stmt->bind_param("iss", $user_id, $default_title, $chat_type);
-    
-    if ($stmt->execute()) {
-        $active_conversation_id = $conn->insert_id;
-        header("Location: ai-chat.php?conversation=" . $active_conversation_id);
-        exit;
-    } else {
-        $error_message = "Failed to create new conversation. Please try again.";
-    }
-}
-
-// Load specific conversation if requested
-if (isset($_GET['conversation']) && is_numeric($_GET['conversation'])) {
-    $active_conversation_id = (int)$_GET['conversation'];
-    
-    // Verify conversation belongs to this user
-    $verify_query = "SELECT id, chat_type, title FROM ai_chat_conversations 
-                    WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
-    $stmt = $conn->prepare($verify_query);
-    $stmt->bind_param("ii", $active_conversation_id, $user_id);
-    $stmt->execute();
-    $verify_result = $stmt->get_result();
-    
-    if ($verify_result->num_rows > 0) {
-        $conversation_data = $verify_result->fetch_assoc();
-        $chat_type = $conversation_data['chat_type'];
-        
-        // Get messages for this conversation
-        $messages_query = "SELECT * FROM ai_chat_messages 
-                         WHERE conversation_id = ? AND deleted_at IS NULL 
-                         ORDER BY created_at ASC";
-        $stmt = $conn->prepare($messages_query);
-        $stmt->bind_param("i", $active_conversation_id);
-        $stmt->execute();
-        $messages_result = $stmt->get_result();
-        
-        while ($row = $messages_result->fetch_assoc()) {
-            $messages[] = $row;
-        }
-    } else {
-        $active_conversation_id = null;
-        $error_message = "Conversation not found.";
-    }
-}
-
-// Handle message submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message'], $_POST['conversation_id'])) {
-    $user_message = trim($_POST['message']);
-    $conversation_id = (int)$_POST['conversation_id'];
-    
-    // Verify conversation belongs to this user and get type
-    $verify_query = "SELECT id, chat_type FROM ai_chat_conversations 
-                   WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
-    $stmt = $conn->prepare($verify_query);
-    $stmt->bind_param("ii", $conversation_id, $user_id);
-    $stmt->execute();
-    $verify_result = $stmt->get_result();
-    
-    if ($verify_result->num_rows > 0 && !empty($user_message)) {
-        $conversation_data = $verify_result->fetch_assoc();
-        $chat_type = $conversation_data['chat_type'];
-        
-        // Check monthly limit
-        if ($month_usage >= $monthly_limit) {
-            $error_message = "You have reached your monthly limit of {$monthly_limit} messages. Please try again next month.";
-        } else {
-            // Insert user message
-            $insert_message = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                             VALUES (?, ?, 'user', ?)";
-            $stmt = $conn->prepare($insert_message);
-            $stmt->bind_param("iis", $conversation_id, $user_id, $user_message);
-            
-            if ($stmt->execute()) {
-                $user_message_id = $conn->insert_id;
-                
-                // Update conversation update timestamp
-                $update_query = "UPDATE ai_chat_conversations SET updated_at = NOW() 
-                               WHERE id = ?";
-                $stmt = $conn->prepare($update_query);
-                $stmt->bind_param("i", $conversation_id);
-                $stmt->execute();
-                
-                // Increment usage counter
-                $update_usage = "UPDATE ai_chat_usage SET message_count = message_count + 1 
-                               WHERE professional_id = ? AND month = ?";
-                $stmt = $conn->prepare($update_usage);
-                $stmt->bind_param("is", $user_id, $current_month);
-                $stmt->execute();
-                
-                // Send to OpenAI API and get response
-                $ai_response = getOpenAIResponse($user_message, $messages, $chat_type, $openai_api_key);
-                
-                if ($ai_response) {
-                    // Insert AI response
-                    $insert_response = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                                      VALUES (?, ?, 'assistant', ?)";
-                    $stmt = $conn->prepare($insert_response);
-                    $stmt->bind_param("iis", $conversation_id, $user_id, $ai_response);
-                    $stmt->execute();
-                    
-                    // Reload the page to show the new messages
-                    header("Location: ai-chat.php?conversation=" . $conversation_id);
-                    exit;
-                } else {
-                    $error_message = "Failed to get AI response. Please try again.";
-                }
-            } else {
-                $error_message = "Failed to send message. Please try again.";
-            }
-        }
-    } else {
-        $error_message = "Invalid conversation or empty message.";
-    }
 }
 
 // Function to get response from OpenAI API
@@ -270,29 +136,25 @@ function getOpenAIResponse($user_message, $conversation_history, $chat_type, $ap
     return false;
 }
 
-// Update conversation title if requested
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_title'], $_POST['conversation_id'], $_POST['new_title'])) {
-    $conversation_id = (int)$_POST['conversation_id'];
-    $new_title = trim($_POST['new_title']);
+// Handle actions that may trigger redirects
+// All of this must happen BEFORE any HTML output
+
+// Handle new conversation creation
+if (isset($_GET['new']) && in_array($_GET['type'], ['ircc', 'cases'])) {
+    $chat_type = $_GET['type'];
+    $default_title = ($chat_type == 'ircc') ? 'IRCC Rules and Regulations' : 'Case Laws Research';
     
-    if (!empty($new_title)) {
-        $update_query = "UPDATE ai_chat_conversations SET title = ? 
-                       WHERE id = ? AND professional_id = ?";
-        $stmt = $conn->prepare($update_query);
-        $stmt->bind_param("sii", $new_title, $conversation_id, $user_id);
-        
-        if ($stmt->execute()) {
-            $success_message = "Conversation title updated successfully.";
-            // Update title in the current array of conversations
-            foreach ($conversations as &$conv) {
-                if ($conv['id'] == $conversation_id) {
-                    $conv['title'] = $new_title;
-                    break;
-                }
-            }
-        } else {
-            $error_message = "Failed to update conversation title.";
-        }
+    $create_query = "INSERT INTO ai_chat_conversations (professional_id, title, chat_type) 
+                    VALUES (?, ?, ?)";
+    $stmt = $conn->prepare($create_query);
+    $stmt->bind_param("iss", $user_id, $default_title, $chat_type);
+    
+    if ($stmt->execute()) {
+        $active_conversation_id = $conn->insert_id;
+        header("Location: ai-chat.php?conversation=" . $active_conversation_id);
+        exit;
+    } else {
+        $error_message = "Failed to create new conversation. Please try again.";
     }
 }
 
@@ -308,21 +170,165 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     
     if ($stmt->execute() && $stmt->affected_rows > 0) {
         // If we deleted the active conversation, redirect to the main page
-        if ($active_conversation_id == $conversation_id) {
+        if (isset($_GET['conversation']) && $_GET['conversation'] == $conversation_id) {
             header("Location: ai-chat.php");
             exit;
         } else {
-            // Remove from the array
-            foreach ($conversations as $key => $conv) {
-                if ($conv['id'] == $conversation_id) {
-                    unset($conversations[$key]);
-                    break;
-                }
-            }
             $success_message = "Conversation deleted successfully.";
         }
     } else {
         $error_message = "Failed to delete conversation.";
+    }
+}
+
+// Handle message submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message'], $_POST['conversation_id'])) {
+    $user_message = trim($_POST['message']);
+    $conversation_id = (int)$_POST['conversation_id'];
+    
+    // Verify conversation belongs to this user and get type
+    $verify_query = "SELECT id, chat_type FROM ai_chat_conversations 
+                   WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
+    $stmt = $conn->prepare($verify_query);
+    $stmt->bind_param("ii", $conversation_id, $user_id);
+    $stmt->execute();
+    $verify_result = $stmt->get_result();
+    
+    if ($verify_result->num_rows > 0 && !empty($user_message)) {
+        $conversation_data = $verify_result->fetch_assoc();
+        $chat_type = $conversation_data['chat_type'];
+        
+        // Check monthly limit
+        if ($month_usage >= $monthly_limit) {
+            $error_message = "You have reached your monthly limit of {$monthly_limit} messages. Please try again next month.";
+        } else {
+            // Insert user message
+            $insert_message = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
+                             VALUES (?, ?, 'user', ?)";
+            $stmt = $conn->prepare($insert_message);
+            $stmt->bind_param("iis", $conversation_id, $user_id, $user_message);
+            
+            if ($stmt->execute()) {
+                $user_message_id = $conn->insert_id;
+                
+                // Update conversation update timestamp
+                $update_query = "UPDATE ai_chat_conversations SET updated_at = NOW() 
+                               WHERE id = ?";
+                $stmt = $conn->prepare($update_query);
+                $stmt->bind_param("i", $conversation_id);
+                $stmt->execute();
+                
+                // Increment usage counter
+                $update_usage = "UPDATE ai_chat_usage SET message_count = message_count + 1 
+                               WHERE professional_id = ? AND month = ?";
+                $stmt = $conn->prepare($update_usage);
+                $stmt->bind_param("is", $user_id, $current_month);
+                $stmt->execute();
+                
+                // Send to OpenAI API and get response
+                $temp_messages_query = "SELECT * FROM ai_chat_messages 
+                                      WHERE conversation_id = ? AND deleted_at IS NULL 
+                                      ORDER BY created_at ASC";
+                $stmt = $conn->prepare($temp_messages_query);
+                $stmt->bind_param("i", $conversation_id);
+                $stmt->execute();
+                $temp_messages_result = $stmt->get_result();
+                
+                $temp_messages = [];
+                while ($row = $temp_messages_result->fetch_assoc()) {
+                    $temp_messages[] = $row;
+                }
+                
+                $ai_response = getOpenAIResponse($user_message, $temp_messages, $chat_type, $openai_api_key);
+                
+                if ($ai_response) {
+                    // Insert AI response
+                    $insert_response = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
+                                      VALUES (?, ?, 'assistant', ?)";
+                    $stmt = $conn->prepare($insert_response);
+                    $stmt->bind_param("iis", $conversation_id, $user_id, $ai_response);
+                    $stmt->execute();
+                    
+                    // Reload the page to show the new messages
+                    header("Location: ai-chat.php?conversation=" . $conversation_id);
+                    exit;
+                } else {
+                    $error_message = "Failed to get AI response. Please try again.";
+                }
+            } else {
+                $error_message = "Failed to send message. Please try again.";
+            }
+        }
+    } else {
+        $error_message = "Invalid conversation or empty message.";
+    }
+}
+
+// Update conversation title if requested
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_title'], $_POST['conversation_id'], $_POST['new_title'])) {
+    $conversation_id = (int)$_POST['conversation_id'];
+    $new_title = trim($_POST['new_title']);
+    
+    if (!empty($new_title)) {
+        $update_query = "UPDATE ai_chat_conversations SET title = ? 
+                       WHERE id = ? AND professional_id = ?";
+        $stmt = $conn->prepare($update_query);
+        $stmt->bind_param("sii", $new_title, $conversation_id, $user_id);
+        
+        if ($stmt->execute()) {
+            $success_message = "Conversation title updated successfully.";
+        } else {
+            $error_message = "Failed to update conversation title.";
+        }
+    }
+}
+
+// Get user's conversation history - do this after any potential deletions
+$history_query = "SELECT c.id, c.title, c.chat_type, c.created_at, c.updated_at,
+                 (SELECT COUNT(*) FROM ai_chat_messages m WHERE m.conversation_id = c.id) as message_count
+                 FROM ai_chat_conversations c
+                 WHERE c.professional_id = ? AND c.deleted_at IS NULL
+                 ORDER BY c.updated_at DESC";
+$stmt = $conn->prepare($history_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$history_result = $stmt->get_result();
+
+while ($row = $history_result->fetch_assoc()) {
+    $conversations[] = $row;
+}
+
+// Load specific conversation if requested
+if (isset($_GET['conversation']) && is_numeric($_GET['conversation'])) {
+    $active_conversation_id = (int)$_GET['conversation'];
+    
+    // Verify conversation belongs to this user
+    $verify_query = "SELECT id, chat_type, title FROM ai_chat_conversations 
+                    WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
+    $stmt = $conn->prepare($verify_query);
+    $stmt->bind_param("ii", $active_conversation_id, $user_id);
+    $stmt->execute();
+    $verify_result = $stmt->get_result();
+    
+    if ($verify_result->num_rows > 0) {
+        $conversation_data = $verify_result->fetch_assoc();
+        $chat_type = $conversation_data['chat_type'];
+        
+        // Get messages for this conversation
+        $messages_query = "SELECT * FROM ai_chat_messages 
+                         WHERE conversation_id = ? AND deleted_at IS NULL 
+                         ORDER BY created_at ASC";
+        $stmt = $conn->prepare($messages_query);
+        $stmt->bind_param("i", $active_conversation_id);
+        $stmt->execute();
+        $messages_result = $stmt->get_result();
+        
+        while ($row = $messages_result->fetch_assoc()) {
+            $messages[] = $row;
+        }
+    } else {
+        $active_conversation_id = null;
+        $error_message = "Conversation not found.";
     }
 }
 
@@ -438,6 +444,16 @@ $page_specific_css = '
 
 .chat-item:hover .delete-btn {
     opacity: 1;
+}
+
+.badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    border-radius: 10px;
+    background-color: #e9ecef;
+    color: #495057;
+    margin-top: 5px;
 }
 
 .new-chat-btn {
@@ -567,6 +583,34 @@ $page_specific_css = '
     background-color: #f5f7fa;
 }
 
+.welcome-message {
+    text-align: center;
+    padding: 30px;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.welcome-message h3 {
+    margin-bottom: 20px;
+    color: #2c3e50;
+}
+
+.welcome-message p {
+    margin-bottom: 15px;
+    color: #7f8c8d;
+}
+
+.welcome-message ul {
+    text-align: left;
+    margin: 15px auto;
+    max-width: 400px;
+}
+
+.welcome-message li {
+    margin-bottom: 10px;
+    color: #3498db;
+}
+
 .message {
     margin-bottom: 16px;
     max-width: 80%;
@@ -691,6 +735,13 @@ $page_specific_css = '
     background: #3d5cbe;
 }
 
+.limit-message {
+    text-align: center;
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: #e74c3c;
+}
+
 .alert {
     padding: 12px 16px;
     margin-bottom: 16px;
@@ -809,6 +860,9 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 });
 ';
+
+// End output buffering and send the response
+ob_end_flush();
 ?>
 
 <!-- AI Chat Container -->
@@ -838,7 +892,7 @@ document.addEventListener("DOMContentLoaded", function() {
         
         <div class="chat-list">
             <?php if (empty($conversations)): ?>
-                <p style="text-align: center; color: #7f8c8d; font-style: italic;">No conversations yet.</p>
+                <p style="text-align: center; color: #7f8c8d; font-style: italic; padding: 20px;">No conversations yet.</p>
             <?php else: ?>
                 <?php foreach ($conversations as $conversation): ?>
                     <div class="chat-item <?php echo ($active_conversation_id == $conversation['id']) ? 'active' : ''; ?>"
@@ -899,7 +953,7 @@ document.addEventListener("DOMContentLoaded", function() {
             <!-- Active Chat Interface -->
             <div class="chat-interface active">
                 <div class="chat-header">
-                    <h3 class="chat-title"><?php echo htmlspecialchars($conversation_data['title']); ?></h3>
+                    <h3 class="chat-title"><?php echo htmlspecialchars($conversation_data['title'] ?? ''); ?></h3>
                     <button class="edit-title-btn" onclick="editTitle()">
                         <i class="fas fa-edit"></i>
                     </button>
@@ -907,7 +961,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     <!-- Edit title form -->
                     <form class="chat-title-form" method="post" action="">
                         <input type="hidden" name="conversation_id" value="<?php echo $active_conversation_id; ?>">
-                        <input type="text" name="new_title" value="<?php echo htmlspecialchars($conversation_data['title']); ?>" required>
+                        <input type="text" name="new_title" value="<?php echo htmlspecialchars($conversation_data['title'] ?? ''); ?>" required>
                         <button type="submit" name="update_title" class="button button-small">Save</button>
                         <button type="button" class="button button-small button-secondary" onclick="cancelEditTitle()">Cancel</button>
                     </form>
@@ -937,7 +991,27 @@ document.addEventListener("DOMContentLoaded", function() {
                             <?php endif; ?>
                         </div>
                     <?php else: ?>
-                        <?php foreach ($messages as $message): ?>
+                        <?php 
+                        $prev_date = null;
+                        foreach ($messages as $message): 
+                            $msg_date = date('Y-m-d', strtotime($message['created_at']));
+                            
+                            // Show date separator
+                            if ($prev_date != $msg_date) {
+                                $today = date('Y-m-d');
+                                $yesterday = date('Y-m-d', strtotime('-1 day'));
+                                
+                                if ($msg_date == $today) {
+                                    $date_display = 'Today';
+                                } elseif ($msg_date == $yesterday) {
+                                    $date_display = 'Yesterday';
+                                } else {
+                                    $date_display = date('F j, Y', strtotime($message['created_at']));
+                                }
+                                echo '<div class="date-separator"><span>' . $date_display . '</span></div>';
+                                $prev_date = $msg_date;
+                            }
+                        ?>
                             <div class="message <?php echo $message['role']; ?>">
                                 <div class="message-role"><?php echo $message['role']; ?></div>
                                 <div class="message-content">
@@ -956,13 +1030,13 @@ document.addEventListener("DOMContentLoaded", function() {
                         <input type="hidden" name="conversation_id" value="<?php echo $active_conversation_id; ?>">
                         <textarea 
                             name="message" 
+                            id="messageInput"
                             placeholder="Type your message here..." 
                             required 
-                            oninput="autoGrow(this)"
                             <?php if ($month_usage >= $monthly_limit): ?>disabled<?php endif; ?>
                         ></textarea>
                         <button type="submit" <?php if ($month_usage >= $monthly_limit): ?>disabled<?php endif; ?>>
-                            Send
+                            <i class="fas fa-paper-plane"></i>
                         </button>
                     </form>
                     
@@ -991,6 +1065,84 @@ document.addEventListener("DOMContentLoaded", function() {
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+function startChat(type) {
+    window.location.href = "ai-chat.php?new=1&type=" + type;
+}
+
+function autoGrow(element) {
+    element.style.height = "24px";
+    element.style.height = (element.scrollHeight) + "px";
+}
+
+function sendMessage(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const textarea = form.querySelector("textarea");
+    const submitBtn = form.querySelector("button[type=submit]");
+    const message = textarea.value.trim();
+    
+    if (message) {
+        // Disable form controls
+        textarea.disabled = true;
+        submitBtn.disabled = true;
+        
+        // Show typing indicator
+        const chatMessages = document.getElementById("chat-messages");
+        chatMessages.innerHTML += `
+            <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        `;
+        
+        // Scroll to bottom
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        // Submit the form
+        form.submit();
+    }
+}
+
+function editTitle() {
+    document.querySelector(".chat-title").style.display = "none";
+    document.querySelector(".edit-title-btn").style.display = "none";
+    document.querySelector(".chat-title-form").classList.add("active");
+    document.querySelector(".chat-title-form input").focus();
+}
+
+function cancelEditTitle() {
+    document.querySelector(".chat-title").style.display = "inline";
+    document.querySelector(".edit-title-btn").style.display = "inline";
+    document.querySelector(".chat-title-form").classList.remove("active");
+}
+
+function confirmDelete(id, title) {
+    if (confirm("Are you sure you want to delete the conversation '" + title + "'?")) {
+        window.location.href = "ai-chat.php?delete=" + id;
+    }
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+    // Auto-resize textarea
+    const textarea = document.getElementById("messageInput");
+    if (textarea) {
+        textarea.addEventListener("input", function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+    }
+    
+    // Scroll chat to bottom
+    const chatMessages = document.getElementById("chat-messages");
+    if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+});
+</script>
 
 <?php
 // Include footer
