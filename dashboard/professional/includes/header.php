@@ -39,6 +39,24 @@ $notif_result = $stmt->get_result();
 $notification_count = $notif_result->fetch_assoc()['count'];
 $stmt->close();
 
+// Get recent notifications (limit to 5)
+$stmt = $conn->prepare("SELECT id, title, message, is_read, created_at FROM notifications 
+                       WHERE user_id = ? AND deleted_at IS NULL 
+                       ORDER BY created_at DESC LIMIT 5");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$notifications = $stmt->get_result();
+$notifications_list = [];
+while ($notification = $notifications->fetch_assoc()) {
+    $notifications_list[] = $notification;
+}
+$stmt->close();
+
+// Debug: If there are no notifications but we have a count, something's wrong
+if (empty($notifications_list) && $notification_count > 0) {
+    error_log("Warning: Notifications count is $notification_count but no notifications were fetched.");
+}
+
 // Determine if sidebar should be collapsed based on user preference or default
 $sidebar_collapsed = isset($_COOKIE['sidebar_collapsed']) && $_COOKIE['sidebar_collapsed'] === 'true';
 $sidebar_class = $sidebar_collapsed ? 'collapsed' : '';
@@ -84,6 +102,124 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
             font-weight: 600;
         }
         
+        /* Notification dropdown styles */
+        .notification-dropdown {
+            position: relative;
+        }
+        
+        .notification-icon {
+            cursor: pointer;
+            position: relative;
+            padding: 8px;
+        }
+        
+        .notification-badge {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background-color: #e53e3e;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 5px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        
+        .notification-menu {
+            position: absolute;
+            right: 0;
+            top: 100%;
+            background-color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            width: 320px;
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        
+        .notification-menu.show {
+            display: block;
+        }
+        
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .notification-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        
+        .notification-header a {
+            color: #3498db;
+            font-size: 0.8rem;
+            text-decoration: none;
+        }
+        
+        .notification-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .notification-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #f1f1f1;
+            transition: background-color 0.2s;
+        }
+        
+        .notification-item:hover {
+            background-color: #f9fafb;
+        }
+        
+        .notification-item.unread {
+            background-color: #ebf8ff;
+        }
+        
+        .notification-item .title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #2d3748;
+        }
+        
+        .notification-item .message {
+            font-size: 0.85rem;
+            color: #4a5568;
+            margin-bottom: 5px;
+        }
+        
+        .notification-item .time {
+            font-size: 0.75rem;
+            color: #a0aec0;
+        }
+        
+        .notification-footer {
+            padding: 10px 15px;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .notification-footer a {
+            color: #3498db;
+            font-size: 0.9rem;
+            text-decoration: none;
+        }
+        
+        .no-notifications {
+            padding: 20px;
+            text-align: center;
+            color: #718096;
+            font-style: italic;
+        }
+        
         <?php if (isset($page_specific_css)): ?>
             <?php echo $page_specific_css; ?>
         <?php endif; ?>
@@ -103,11 +239,50 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
             </div>
             <div class="header-right">
                 <div class="notification-dropdown">
-                    <div class="notification-icon">
+                    <div class="notification-icon" id="notification-toggle">
                         <i class="fas fa-bell"></i>
                         <?php if ($notification_count > 0): ?>
                         <span class="notification-badge"><?php echo $notification_count; ?></span>
                         <?php endif; ?>
+                    </div>
+                    <div class="notification-menu" id="notification-menu">
+                        <div class="notification-header">
+                            <h3>Notifications</h3>
+                            <a href="notifications.php" class="mark-all-read">Mark all as read</a>
+                        </div>
+                        <ul class="notification-list">
+                            <?php if (empty($notifications_list)): ?>
+                                <li class="no-notifications">No notifications to display</li>
+                            <?php else: ?>
+                                <?php foreach ($notifications_list as $notification): ?>
+                                    <li class="notification-item <?php echo $notification['is_read'] ? '' : 'unread'; ?>" 
+                                        data-id="<?php echo $notification['id']; ?>">
+                                        <div class="title"><?php echo htmlspecialchars($notification['title']); ?></div>
+                                        <div class="message"><?php echo htmlspecialchars($notification['message']); ?></div>
+                                        <div class="time">
+                                            <?php 
+                                                $date = new DateTime($notification['created_at']);
+                                                $now = new DateTime();
+                                                $interval = $date->diff($now);
+                                                
+                                                if ($interval->d > 0) {
+                                                    echo $interval->d . ' day' . ($interval->d > 1 ? 's' : '') . ' ago';
+                                                } elseif ($interval->h > 0) {
+                                                    echo $interval->h . ' hour' . ($interval->h > 1 ? 's' : '') . ' ago';
+                                                } elseif ($interval->i > 0) {
+                                                    echo $interval->i . ' minute' . ($interval->i > 1 ? 's' : '') . ' ago';
+                                                } else {
+                                                    echo 'Just now';
+                                                }
+                                            ?>
+                                        </div>
+                                    </li>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </ul>
+                        <div class="notification-footer">
+                            <a href="notifications.php">View All Notifications</a>
+                        </div>
                     </div>
                 </div>
                 <div class="user-dropdown">
@@ -156,9 +331,9 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
                     <i class="fas fa-briefcase"></i>
                     <span class="nav-item-text">Services</span>
                 </a>
-                <a href="calendar.php" class="nav-item <?php echo $current_page == 'calendar' ? 'active' : ''; ?>">
+                <a href="availability.php" class="nav-item <?php echo $current_page == 'availability' ? 'active' : ''; ?>">
                     <i class="fas fa-calendar-alt"></i>
-                    <span class="nav-item-text">Calendar</span>
+                    <span class="nav-item-text">Availability</span>
                 </a>
                 <a href="appointments.php" class="nav-item <?php echo $current_page == 'appointments' ? 'active' : ''; ?>">
                     <i class="fas fa-clock"></i>
@@ -207,3 +382,93 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
            
             
 <!-- End of header - page content will be inserted here --> 
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Sidebar toggle functionality
+        document.getElementById('sidebar-toggle').addEventListener('click', function() {
+            document.querySelector('.sidebar').classList.toggle('collapsed');
+            document.querySelector('.main-content').classList.toggle('expanded');
+            
+            // Save preference in cookie
+            const isCollapsed = document.querySelector('.sidebar').classList.contains('collapsed');
+            document.cookie = `sidebar_collapsed=${isCollapsed}; path=/; max-age=31536000`;
+        });
+        
+        // Notification dropdown toggle
+        document.getElementById('notification-toggle').addEventListener('click', function(e) {
+            e.stopPropagation();
+            document.getElementById('notification-menu').classList.toggle('show');
+        });
+        
+        // Close notification dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const dropdown = document.getElementById('notification-menu');
+            if (dropdown.classList.contains('show') && !dropdown.contains(e.target) && e.target.id !== 'notification-toggle') {
+                dropdown.classList.remove('show');
+            }
+        });
+        
+        // Handle notification click - mark as read
+        document.querySelectorAll('.notification-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const notificationId = this.getAttribute('data-id');
+                if (this.classList.contains('unread')) {
+                    // AJAX request to mark notification as read
+                    fetch('ajax/mark_notification_read.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: 'notification_id=' + notificationId
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            this.classList.remove('unread');
+                            // Update badge count
+                            const badge = document.querySelector('.notification-badge');
+                            if (badge) {
+                                const currentCount = parseInt(badge.textContent);
+                                if (currentCount > 1) {
+                                    badge.textContent = currentCount - 1;
+                                } else {
+                                    badge.remove();
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        });
+        
+        // Mark all as read functionality
+        const markAllReadBtn = document.querySelector('.mark-all-read');
+        if (markAllReadBtn) {
+            markAllReadBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                // AJAX request to mark all notifications as read
+                fetch('ajax/mark_all_notifications_read.php', {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update UI
+                        document.querySelectorAll('.notification-item.unread').forEach(item => {
+                            item.classList.remove('unread');
+                        });
+                        
+                        // Remove notification badge
+                        const badge = document.querySelector('.notification-badge');
+                        if (badge) {
+                            badge.remove();
+                        }
+                    }
+                });
+            });
+        }
+    });
+</script>
+   
