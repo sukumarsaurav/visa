@@ -1,198 +1,388 @@
 <?php
+session_start();
+
+// Check if user is logged in and is an employer
+if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'employer') {
+    header("Location: ../../login.php");
+    exit();
+}
+
+// Get user data
+$user_id = $_SESSION['user_id'];
+$employer = null;
+$success_message = '';
+$error_message = '';
+
+// Include database connection
 require_once '../../config/db_connect.php';
 require_once '../../includes/functions.php';
 
-session_start();
-requireUserType('employer', '../../login.php');
+try {
+    // Fetch employer data from users table 
+    $stmt = $conn->prepare("SELECT * FROM users WHERE id = ? AND user_type = 'employer'");
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
 
-// Get employer's information
-$user_id = $_SESSION['user_id'];
-$success = '';
-$error = '';
-
-// Fetch employer data from users table since there's no separate table for employers in the database schema
-$stmt = $conn->prepare("SELECT * FROM users WHERE id = ? AND user_type = 'employer'");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result = $stmt->get_result();
-
-if ($result->num_rows == 0) {
-    $error = "Employer profile not found.";
+    if ($result->num_rows == 0) {
+        $error_message = "Employer profile not found.";
+    } else {
+        $employer = $result->fetch_assoc();
+    }
+} catch(Exception $e) {
+    // Log error and show generic message
+    error_log("Database Error: " . $e->getMessage());
+    $error_message = "System is temporarily unavailable. Please try again later.";
 }
-
-$employer = $result->fetch_assoc();
 
 // Handle profile update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile'])) {
-    $name = $conn->real_escape_string($_POST['name']);
-    $phone = $conn->real_escape_string($_POST['phone'] ?? '');
-    $company = $conn->real_escape_string($_POST['company'] ?? '');
-    $position = $conn->real_escape_string($_POST['position'] ?? '');
-    
-    // Handle profile picture upload
-    $profile_picture = $employer['profile_picture'];
-    if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] == 0) {
-        $allowed = ['jpg', 'jpeg', 'png', 'gif'];
-        $filename = $_FILES['profile_picture']['name'];
-        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    try {
+        // Start transaction
+        $conn->begin_transaction();
         
-        if (in_array($ext, $allowed)) {
-            $new_filename = 'employer_' . $user_id . '_' . time() . '.' . $ext;
-            $upload_dir = '../../uploads/profiles/';
+        $name = $conn->real_escape_string($_POST['name']);
+        $phone = $conn->real_escape_string($_POST['phone'] ?? '');
+        $company = $conn->real_escape_string($_POST['company'] ?? '');
+        $position = $conn->real_escape_string($_POST['position'] ?? '');
+        
+        // Handle profile picture upload
+        $profile_picture = $employer['profile_picture'];
+        if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] == 0) {
+            $allowed = ['jpg', 'jpeg', 'png', 'gif'];
+            $filename = $_FILES['profile_picture']['name'];
+            $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
             
-            // Create directory if it doesn't exist
-            if (!file_exists($upload_dir)) {
-                mkdir($upload_dir, 0777, true);
-            }
-            
-            if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $upload_dir . $new_filename)) {
-                $profile_picture = $new_filename;
+            if (in_array($ext, $allowed)) {
+                $new_filename = 'employer_' . $user_id . '_' . time() . '.' . $ext;
+                $upload_dir = '../../uploads/profiles/';
+                
+                // Create directory if it doesn't exist
+                if (!file_exists($upload_dir)) {
+                    mkdir($upload_dir, 0777, true);
+                }
+                
+                if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $upload_dir . $new_filename)) {
+                    $profile_picture = $new_filename;
+                }
             }
         }
-    }
-    
-    // Update employer data
-    try {
+        
+        // Update employer data
         $stmt = $conn->prepare("UPDATE users SET name = ?, profile_picture = ? WHERE id = ?");
         $stmt->bind_param("ssi", $name, $profile_picture, $user_id);
-        $stmt->execute();
         
-        // Check if we have a meta table for storing additional employer information
-        // For now, we'll just update the fields we have
-        $success = "Profile updated successfully.";
-        header("Location: profile.php?success=updated");
-        exit();
+        if ($stmt->execute()) {
+            // Commit transaction
+            $conn->commit();
+            $success_message = "Profile updated successfully.";
+            
+            // Refresh employer data
+            $stmt = $conn->prepare("SELECT * FROM users WHERE id = ? AND user_type = 'employer'");
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $employer = $result->fetch_assoc();
+        } else {
+            throw new Exception("Failed to update profile.");
+        }
     } catch (Exception $e) {
-        $error = "Profile update failed: " . $e->getMessage();
+        // Rollback in case of error
+        $conn->rollback();
+        $error_message = "Profile update failed: " . $e->getMessage();
     }
 }
 
-// Include header
-$page_title = "Employer Profile";
-include '../includes/header.php';
+// Set page variables
+$page_title = "My Profile";
+$page_header = "Employer Profile";
 ?>
-
-<div class="container-fluid">
-    <div class="row">
-        <!-- Sidebar -->
-        <?php include 'includes/sidebar.php'; ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo $page_title; ?> - Visafy</title>
+    <link rel="stylesheet" href="../../assets/css/styles.css">
+    <style>
+        /* Page-specific CSS */
+        .profile-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
         
-        <!-- Main content -->
-        <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 py-4">
-            <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-                <h1 class="h2">My Profile</h1>
+        .profile-sidebar {
+            flex: 1;
+            min-width: 250px;
+        }
+        
+        .profile-main {
+            flex: 3;
+            min-width: 400px;
+        }
+        
+        .profile-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .profile-image-container {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .profile-image {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 4px solid #f0f0f0;
+        }
+        
+        .profile-placeholder {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            background-color: #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: #6c757d;
+            margin: 0 auto;
+        }
+        
+        .profile-header {
+            border-bottom: 1px solid #eee;
+            padding: 15px 20px;
+        }
+        
+        .profile-header h3 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+        
+        .profile-body {
+            padding: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        
+        .form-hint {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .status-row span:first-child {
+            margin-right: 8px;
+            min-width: 120px;
+        }
+        
+        .button {
+            background-color: #4a6fdc;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: inline-block;
+            text-decoration: none;
+        }
+        
+        .button:hover {
+            background-color: #3a5fcc;
+        }
+        
+        .alert {
+            padding: 12px 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="main-header">
+            <div class="header-logo">
+                <a href="../index.php">
+                    <img src="../../assets/images/logo.png" alt="Visafy">
+                </a>
             </div>
+            <nav class="main-nav">
+                <ul>
+                    <li><a href="index.php">Dashboard</a></li>
+                    <li><a href="profile.php" class="active">Profile</a></li>
+                    <li><a href="document.php">Documents</a></li>
+                    <li><a href="../../logout.php">Logout</a></li>
+                </ul>
+            </nav>
+        </header>
+        
+        <main class="main-content">
+            <h1 class="page-title"><?php echo $page_header; ?></h1>
             
-            <?php if ($success): ?>
-                <div class="alert alert-success alert-dismissible fade show" role="alert">
-                    <?php echo $success; ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            <?php if ($success_message): ?>
+                <div class="alert alert-success">
+                    <?php echo $success_message; ?>
                 </div>
             <?php endif; ?>
             
-            <?php if ($error): ?>
-                <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                    <?php echo $error; ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            <?php if ($error_message): ?>
+                <div class="alert alert-danger">
+                    <?php echo $error_message; ?>
                 </div>
             <?php endif; ?>
             
-            <?php if (isset($employer)): ?>
-                <div class="row">
-                    <div class="col-md-4 mb-4">
-                        <div class="card">
-                            <div class="card-body text-center">
+            <?php if ($employer): ?>
+                <div class="profile-container">
+                    <div class="profile-sidebar">
+                        <div class="profile-card">
+                            <div class="profile-image-container">
                                 <?php if (!empty($employer['profile_picture'])): ?>
-                                    <img src="../../uploads/profiles/<?php echo $employer['profile_picture']; ?>" 
-                                         alt="<?php echo $employer['name']; ?>" 
-                                         class="rounded-circle profile-img mb-3" 
-                                         style="width: 150px; height: 150px; object-fit: cover;">
+                                    <img src="../../uploads/profiles/<?php echo htmlspecialchars($employer['profile_picture']); ?>" 
+                                         alt="<?php echo htmlspecialchars($employer['name']); ?>" class="profile-image">
                                 <?php else: ?>
-                                    <div class="rounded-circle profile-placeholder mb-3 d-flex align-items-center justify-content-center" 
-                                         style="width: 150px; height: 150px; background-color: #e9ecef; margin: 0 auto;">
-                                        <span style="font-size: 3rem; color: #6c757d;">
-                                            <?php echo strtoupper(substr($employer['name'], 0, 1)); ?>
-                                        </span>
+                                    <div class="profile-placeholder">
+                                        <?php echo strtoupper(substr($employer['name'], 0, 1)); ?>
                                     </div>
                                 <?php endif; ?>
                                 
-                                <h4><?php echo $employer['name']; ?></h4>
-                                <p class="text-muted"><?php echo $employer['email']; ?></p>
+                                <h3><?php echo htmlspecialchars($employer['name']); ?></h3>
+                                <p><?php echo htmlspecialchars($employer['email']); ?></p>
+                            </div>
+                            
+                            <div class="profile-body">
+                                <h4>Account Status</h4>
+                                <div class="status-row">
+                                    <span>Email Verification:</span>
+                                    <?php if ($employer['email_verified']): ?>
+                                        <span class="status-badge badge-success">Verified</span>
+                                    <?php else: ?>
+                                        <span class="status-badge badge-warning">Pending</span>
+                                    <?php endif; ?>
+                                </div>
                                 
-                                <hr>
-                                
-                                <div class="verification-status text-start">
-                                    <h5>Account Status</h5>
-                                    <div class="d-flex align-items-center mb-2">
-                                        <span class="me-2">Email Verification:</span>
-                                        <?php if ($employer['email_verified']): ?>
-                                            <span class="badge bg-success">Verified</span>
-                                        <?php else: ?>
-                                            <span class="badge bg-warning text-dark">Pending</span>
-                                        <?php endif; ?>
-                                    </div>
-                                    
-                                    <div class="d-flex align-items-center">
-                                        <span class="me-2">Account Status:</span>
-                                        <?php if ($employer['status'] == 'active'): ?>
-                                            <span class="badge bg-success">Active</span>
-                                        <?php else: ?>
-                                            <span class="badge bg-danger">Suspended</span>
-                                        <?php endif; ?>
-                                    </div>
+                                <div class="status-row">
+                                    <span>Account Status:</span>
+                                    <?php if ($employer['status'] == 'active'): ?>
+                                        <span class="status-badge badge-success">Active</span>
+                                    <?php else: ?>
+                                        <span class="status-badge badge-danger">Suspended</span>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="col-md-8">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0">Edit Profile</h5>
+                    <div class="profile-main">
+                        <div class="profile-card">
+                            <div class="profile-header">
+                                <h3>Edit Profile</h3>
                             </div>
                             
-                            <div class="card-body">
+                            <div class="profile-body">
                                 <form action="" method="post" enctype="multipart/form-data">
-                                    <div class="row mb-3">
-                                        <div class="col-md-12">
-                                            <label for="profile_picture" class="form-label">Profile Picture</label>
-                                            <input type="file" class="form-control" id="profile_picture" name="profile_picture">
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="profile_picture">Profile Picture</label>
+                                        <input type="file" class="form-control" id="profile_picture" name="profile_picture">
                                     </div>
                                     
-                                    <div class="row mb-3">
-                                        <div class="col-md-6">
-                                            <label for="name" class="form-label">Full Name</label>
-                                            <input type="text" class="form-control" id="name" name="name" value="<?php echo $employer['name']; ?>" required>
-                                        </div>
-                                        
-                                        <div class="col-md-6">
-                                            <label for="email" class="form-label">Email Address</label>
-                                            <input type="email" class="form-control" id="email" value="<?php echo $employer['email']; ?>" disabled>
-                                            <div class="form-text">Email cannot be changed.</div>
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="name">Full Name</label>
+                                        <input type="text" class="form-control" id="name" name="name" 
+                                               value="<?php echo htmlspecialchars($employer['name']); ?>" required>
                                     </div>
                                     
-                                    <!-- Additional fields could be stored in a meta table in the future -->
-                                    <div class="row mb-3">
-                                        <div class="col-md-6">
-                                            <label for="company" class="form-label">Company Name</label>
-                                            <input type="text" class="form-control" id="company" name="company" value="">
-                                        </div>
-                                        
-                                        <div class="col-md-6">
-                                            <label for="position" class="form-label">Position</label>
-                                            <input type="text" class="form-control" id="position" name="position" value="">
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="email">Email Address</label>
+                                        <input type="email" class="form-control" id="email" 
+                                               value="<?php echo htmlspecialchars($employer['email']); ?>" disabled>
+                                        <div class="form-hint">Email cannot be changed.</div>
                                     </div>
                                     
-                                    <div class="mb-3">
-                                        <label for="phone" class="form-label">Phone Number</label>
-                                        <input type="tel" class="form-control" id="phone" name="phone" value="">
+                                    <div class="form-group">
+                                        <label for="company">Company Name</label>
+                                        <input type="text" class="form-control" id="company" name="company" 
+                                               value="<?php echo isset($employer['company']) ? htmlspecialchars($employer['company']) : ''; ?>">
                                     </div>
                                     
-                                    <div class="d-grid gap-2">
-                                        <button type="submit" name="update_profile" class="btn btn-primary">Save Changes</button>
+                                    <div class="form-group">
+                                        <label for="position">Position</label>
+                                        <input type="text" class="form-control" id="position" name="position" 
+                                               value="<?php echo isset($employer['position']) ? htmlspecialchars($employer['position']) : ''; ?>">
+                                    </div>
+                                    
+                                    <div class="form-group">
+                                        <label for="phone">Phone Number</label>
+                                        <input type="tel" class="form-control" id="phone" name="phone" 
+                                               value="<?php echo isset($employer['phone']) ? htmlspecialchars($employer['phone']) : ''; ?>">
+                                    </div>
+                                    
+                                    <div class="form-actions">
+                                        <button type="submit" name="update_profile" class="button">Save Changes</button>
                                     </div>
                                 </form>
                             </div>
@@ -201,7 +391,27 @@ include '../includes/header.php';
                 </div>
             <?php endif; ?>
         </main>
+        
+        <footer class="main-footer">
+            <p>&copy; <?php echo date('Y'); ?> Visafy. All rights reserved.</p>
+        </footer>
     </div>
-</div>
-
-<?php include '../includes/footer.php'; ?> 
+    
+    <script>
+        // Auto-hide alerts after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            const alerts = document.querySelectorAll('.alert');
+            if (alerts.length > 0) {
+                setTimeout(function() {
+                    alerts.forEach(function(alert) {
+                        alert.style.opacity = '0';
+                        setTimeout(function() {
+                            alert.style.display = 'none';
+                        }, 300);
+                    });
+                }, 5000);
+            }
+        });
+    </script>
+</body>
+</html> 

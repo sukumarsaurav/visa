@@ -1,4 +1,9 @@
 <?php
+// Set page variables
+$page_title = "Calendar";
+$page_header = "Calendar & Availability";
+
+// Start session
 session_start();
 
 // Check if user is logged in and is a professional
@@ -189,311 +194,330 @@ while ($row = $result->fetch_assoc()) {
         'is_fully_booked' => $row['total_booked_modes'] > 0 // If any mode is booked, slot is unavailable
     ];
 }
+
+// Add button for setting availability
+$header_buttons = '<button id="addAvailabilityBtn" class="button">Set Availability</button>';
+
+// Page specific CSS
+$page_specific_css = '
+/* Calendar-specific styles */
+.calendar {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.calendar th, .calendar td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: center;
+}
+
+.calendar th {
+    background-color: #f5f7fa;
+}
+
+.calendar .other-month {
+    color: #ccc;
+}
+
+.calendar .today {
+    background-color: #e8f4ff;
+    font-weight: bold;
+}
+
+.calendar .available {
+    background-color: #e6f7e6;
+}
+
+.calendar .booked {
+    background-color: #f7e6e6;
+}
+
+.calendar-day {
+    min-height: 80px;
+    position: relative;
+}
+
+.day-number {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    font-weight: bold;
+}
+
+.day-content {
+    margin-top: 25px;
+    font-size: 12px;
+}
+
+.appointment {
+    background-color: #3498db;
+    color: white;
+    border-radius: 3px;
+    padding: 2px 4px;
+    margin-bottom: 2px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.availability-controls {
+    margin-top: 5px;
+}
+
+.month-nav {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.header-actions {
+    margin-bottom: 20px;
+}
+';
+
+// Page specific JavaScript
+$page_js = '
+// Calendar-specific functions
+function showAvailabilityForm() {
+    document.getElementById("availabilityFormContainer").style.display = "block";
+}
+
+function hideAvailabilityForm() {
+    document.getElementById("availabilityFormContainer").style.display = "none";
+}
+
+// Set up event handlers
+document.getElementById("addAvailabilityBtn").addEventListener("click", showAvailabilityForm);
+
+document.querySelectorAll(".set-availability").forEach(link => {
+    link.addEventListener("click", function(e) {
+        e.preventDefault();
+        const dateString = this.getAttribute("data-date");
+        document.getElementById("date").value = dateString;
+        document.getElementById("availabilityFormContainer").style.display = "block";
+        document.getElementById("date").scrollIntoView();
+    });
+});
+';
+
+// Include header
+include_once('includes/header.php');
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calendar - Professional Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-    <style>
-        .calendar {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .calendar th, .calendar td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: center;
-        }
-        
-        .calendar th {
-            background-color: #f5f7fa;
-        }
-        
-        .calendar .other-month {
-            color: #ccc;
-        }
-        
-        .calendar .today {
-            background-color: #e8f4ff;
-            font-weight: bold;
-        }
-        
-        .calendar .available {
-            background-color: #e6f7e6;
-        }
-        
-        .calendar .booked {
-            background-color: #f7e6e6;
-        }
-        
-        .calendar-day {
-            min-height: 80px;
-            position: relative;
-        }
-        
-        .day-number {
-            position: absolute;
-            top: 5px;
-            left: 5px;
-            font-weight: bold;
-        }
-        
-        .day-content {
-            margin-top: 25px;
-            font-size: 12px;
-        }
-        
-        .appointment {
-            background-color: #3498db;
-            color: white;
-            border-radius: 3px;
-            padding: 2px 4px;
-            margin-bottom: 2px;
-            text-align: left;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        
-        .availability-controls {
-            margin-top: 5px;
-        }
-        
-        .month-nav {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 15px;
-        }
-    </style>
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <img src="../../assets/images/professional-avatar.png" alt="Profile" class="profile-image">
-                <h3><?php echo $_SESSION['username']; ?></h3>
-                <p>Visa Professional</p>
-            </div>
+<h1 class="page-title"><?php echo $page_header; ?></h1>
             
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link">Dashboard</a></li>
-                <li class="nav-item"><a href="cases.php" class="nav-link">Cases</a></li>
-                <li class="nav-item"><a href="clients.php" class="nav-link">Clients</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="calendar.php" class="nav-link active">Calendar</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
+<?php if ($success_message): ?>
+    <div class="alert alert-success">
+        <?php echo $success_message; ?>
+    </div>
+<?php endif; ?>
+
+<?php if ($error_message): ?>
+    <div class="alert alert-danger">
+        <?php echo $error_message; ?>
+    </div>
+<?php endif; ?>
+
+<?php if (isset($header_buttons)): ?>
+    <div class="header-actions">
+        <?php echo $header_buttons; ?>
+    </div>
+<?php endif; ?>
+
+<div id="availabilityFormContainer" class="card" style="display: none;">
+    <h2 class="card-title">Set Availability</h2>
+    <form method="POST" action="calendar.php">
+        <div class="form-group">
+            <label for="date">Date</label>
+            <input type="date" id="date" name="date" class="form-control" required min="<?php echo date('Y-m-d'); ?>">
         </div>
         
-        <div class="main-content">
-            <div class="header">
-                <h1>Calendar & Availability</h1>
-                <div>
-                    <button id="addAvailabilityBtn" class="button">Set Availability</button>
-                </div>
-            </div>
-            
-            <?php if ($success_message): ?>
-                <div class="alert success"><?php echo $success_message; ?></div>
-            <?php endif; ?>
-            
-            <?php if ($error_message): ?>
-                <div class="alert error"><?php echo $error_message; ?></div>
-            <?php endif; ?>
-            
-            <div id="availabilityFormContainer" class="card" style="display: none;">
-                <h2 class="card-title">Set Availability</h2>
-                <form method="POST" action="calendar.php">
-                    <div class="form-group">
-                        <label for="date">Date</label>
-                        <input type="date" id="date" name="date" class="form-control" required min="<?php echo date('Y-m-d'); ?>">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="start_time">Start Time</label>
-                        <input type="time" id="start_time" name="start_time" class="form-control" required value="09:00">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="end_time">End Time</label>
-                        <input type="time" id="end_time" name="end_time" class="form-control" required value="17:00">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="slot_duration">Slot Duration (minutes)</label>
-                        <select id="slot_duration" name="slot_duration" class="form-control" required>
-                            <option value="30">30 minutes</option>
-                            <option value="60" selected>1 hour</option>
-                            <option value="90">1.5 hours</option>
-                            <option value="120">2 hours</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="submit" name="create_slots" class="button">Create Time Slots</button>
-                        <button type="button" onclick="hideAvailabilityForm()" class="button button-secondary">Cancel</button>
-                    </div>
-                </form>
-            </div>
-            
-            <div class="card">
-                <div class="month-nav">
-                    <a href="?month=<?php echo $month == 1 ? 12 : $month - 1; ?>&year=<?php echo $month == 1 ? $year - 1 : $year; ?>" class="button button-small">&lt; Previous Month</a>
-                    <h2><?php echo date('F Y', $first_day); ?></h2>
-                    <a href="?month=<?php echo $month == 12 ? 1 : $month + 1; ?>&year=<?php echo $month == 12 ? $year + 1 : $year; ?>" class="button button-small">Next Month &gt;</a>
-                </div>
-                
-                <table class="calendar">
-                    <tr>
-                        <th>Sunday</th>
-                        <th>Monday</th>
-                        <th>Tuesday</th>
-                        <th>Wednesday</th>
-                        <th>Thursday</th>
-                        <th>Friday</th>
-                        <th>Saturday</th>
-                    </tr>
-                    
-                    <?php
-                    // Calendar generation logic
-                    $day_count = 1;
-                    $calendar_rows = ceil(($num_days + $day_of_week) / 7);
-                    
-                    for ($i = 0; $i < $calendar_rows; $i++) {
-                        echo "<tr>";
-                        
-                        for ($j = 0; $j < 7; $j++) {
-                            $current_day = $day_count - $day_of_week;
-                            
-                            // Determine if this day belongs to the current month
-                            if ($current_day <= 0 || $current_day > $num_days) {
-                                echo '<td class="other-month"></td>';
-                            } else {
-                                // Format the date for comparison
-                                $date_string = sprintf('%04d-%02d-%02d', $year, $month, $current_day);
-                                
-                                // Determine if this day is available
-                                $is_available = in_array($date_string, $available_days);
-                                
-                                // Determine if this day has appointments
-                                $day_appointments = [];
-                                foreach ($appointments as $time => $appointment) {
-                                    if (strpos($time, $date_string) === 0) {
-                                        $day_appointments[] = [
-                                            'time' => date('H:i', strtotime($time)),
-                                            'client_name' => $appointment['client_name'],
-                                            'service_type' => $appointment['service_type']
-                                        ];
-                                    }
-                                }
-                                
-                                // Determine if this is today
-                                $is_today = date('Y-m-d') === $date_string;
-                                
-                                // Build the class string
-                                $class = 'calendar-day';
-                                if ($is_today) $class .= ' today';
-                                if ($is_available) $class .= ' available';
-                                if (!empty($day_appointments)) $class .= ' booked';
-                                
-                                echo '<td class="' . $class . '">';
-                                echo '<div class="day-number">' . $current_day . '</div>';
-                                echo '<div class="day-content">';
-                                
-                                // Show appointments for this day
-                                foreach ($day_appointments as $apt) {
-                                    echo '<div class="appointment" title="' . $apt['client_name'] . ' - ' . $apt['service_type'] . '">';
-                                    echo $apt['time'] . ' - ' . $apt['client_name'];
-                                    echo '</div>';
-                                }
-                                
-                                // Show availability controls if available or not past date
-                                if (strtotime($date_string) >= strtotime(date('Y-m-d'))) {
-                                    echo '<div class="availability-controls">';
-                                    if ($is_available) {
-                                        echo '<a href="?action=remove&date=' . $date_string . '&month=' . $month . '&year=' . $year . '" class="button button-small button-delete" onclick="return confirm(\'Remove availability for this date?\')">Remove</a>';
-                                    } else {
-                                        echo '<a href="#" class="button button-small set-availability" data-date="' . $date_string . '">Set Available</a>';
-                                    }
-                                    echo '</div>';
-                                }
-                                
-                                echo '</div>';
-                                echo '</td>';
-                            }
-                            
-                            $day_count++;
-                        }
-                        
-                        echo "</tr>";
-                    }
-                    ?>
-                </table>
-            </div>
-            
-            <div class="card">
-                <h2 class="card-title">Upcoming Appointments</h2>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Date & Time</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Client</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Service Type</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Mode</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Status</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Actions</th>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">July 10, 2023 10:00 AM</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">John Doe</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Consultation</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Video Call</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Confirmed</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                            <a href="appointment_details.php?id=1" class="button button-small">Details</a>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">July 15, 2023 2:30 PM</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Jane Smith</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Document Review</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Video Call</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">Confirmed</td>
-                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                            <a href="appointment_details.php?id=2" class="button button-small">Details</a>
-                        </td>
-                    </tr>
-                </table>
-            </div>
+        <div class="form-group">
+            <label for="start_time">Start Time</label>
+            <input type="time" id="start_time" name="start_time" class="form-control" required value="09:00">
         </div>
+        
+        <div class="form-group">
+            <label for="end_time">End Time</label>
+            <input type="time" id="end_time" name="end_time" class="form-control" required value="17:00">
+        </div>
+        
+        <div class="form-group">
+            <label for="slot_duration">Slot Duration (minutes)</label>
+            <select id="slot_duration" name="slot_duration" class="form-control" required>
+                <option value="30">30 minutes</option>
+                <option value="60" selected>1 hour</option>
+                <option value="90">1.5 hours</option>
+                <option value="120">2 hours</option>
+            </select>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" name="create_slots" class="button">Create Time Slots</button>
+            <button type="button" onclick="hideAvailabilityForm()" class="button button-secondary">Cancel</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="month-nav">
+        <a href="?month=<?php echo $month == 1 ? 12 : $month - 1; ?>&year=<?php echo $month == 1 ? $year - 1 : $year; ?>" class="button button-small">&lt; Previous Month</a>
+        <h2><?php echo date('F Y', $first_day); ?></h2>
+        <a href="?month=<?php echo $month == 12 ? 1 : $month + 1; ?>&year=<?php echo $month == 12 ? $year + 1 : $year; ?>" class="button button-small">Next Month &gt;</a>
     </div>
     
-    <script>
-        function showAvailabilityForm() {
-            document.getElementById('availabilityFormContainer').style.display = 'block';
+    <table class="calendar">
+        <tr>
+            <th>Sunday</th>
+            <th>Monday</th>
+            <th>Tuesday</th>
+            <th>Wednesday</th>
+            <th>Thursday</th>
+            <th>Friday</th>
+            <th>Saturday</th>
+        </tr>
+        
+        <?php
+        // Calendar generation logic
+        $day_count = 1;
+        $calendar_rows = ceil(($num_days + $day_of_week) / 7);
+        
+        for ($i = 0; $i < $calendar_rows; $i++) {
+            echo "<tr>";
+            
+            for ($j = 0; $j < 7; $j++) {
+                $current_day = $day_count - $day_of_week;
+                
+                // Determine if this day belongs to the current month
+                if ($current_day <= 0 || $current_day > $num_days) {
+                    echo '<td class="other-month"></td>';
+                } else {
+                    // Format the date for comparison
+                    $date_string = sprintf('%04d-%02d-%02d', $year, $month, $current_day);
+                    
+                    // Determine if this day is available
+                    $is_available = in_array($date_string, $available_days);
+                    
+                    // Determine if this day has appointments
+                    $day_appointments = [];
+                    foreach ($appointments as $time => $appointment) {
+                        if (strpos($time, $date_string) === 0) {
+                            $day_appointments[] = [
+                                'time' => date('H:i', strtotime($time)),
+                                'client_name' => $appointment['client_name'],
+                                'service_type' => $appointment['service_type']
+                            ];
+                        }
+                    }
+                    
+                    // Determine if this is today
+                    $is_today = date('Y-m-d') === $date_string;
+                    
+                    // Build the class string
+                    $class = 'calendar-day';
+                    if ($is_today) $class .= ' today';
+                    if ($is_available) $class .= ' available';
+                    if (!empty($day_appointments)) $class .= ' booked';
+                    
+                    echo '<td class="' . $class . '">';
+                    echo '<div class="day-number">' . $current_day . '</div>';
+                    echo '<div class="day-content">';
+                    
+                    // Show appointments for this day
+                    foreach ($day_appointments as $apt) {
+                        echo '<div class="appointment" title="' . $apt['client_name'] . ' - ' . $apt['service_type'] . '">';
+                        echo $apt['time'] . ' - ' . $apt['client_name'];
+                        echo '</div>';
+                    }
+                    
+                    // Show availability controls if available or not past date
+                    if (strtotime($date_string) >= strtotime(date('Y-m-d'))) {
+                        echo '<div class="availability-controls">';
+                        if ($is_available) {
+                            echo '<a href="?action=remove&date=' . $date_string . '&month=' . $month . '&year=' . $year . '" class="button button-small button-delete" onclick="return confirm(\'Remove availability for this date?\')">Remove</a>';
+                        } else {
+                            echo '<a href="#" class="button button-small set-availability" data-date="' . $date_string . '">Set Available</a>';
+                        }
+                        echo '</div>';
+                    }
+                    
+                    echo '</div>';
+                    echo '</td>';
+                }
+                
+                $day_count++;
+            }
+            
+            echo "</tr>";
         }
-        
-        function hideAvailabilityForm() {
-            document.getElementById('availabilityFormContainer').style.display = 'none';
-        }
-        
-        document.getElementById('addAvailabilityBtn').addEventListener('click', showAvailabilityForm);
-        
-        // Set date for quick availability setting
-        document.querySelectorAll('.set-availability').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                const dateString = this.getAttribute('data-date');
-                document.getElementById('date').value = dateString;
-                document.getElementById('availabilityFormContainer').style.display = 'block';
-                document.getElementById('date').scrollIntoView();
-            });
-        });
-    </script>
-</body>
-</html> 
+        ?>
+    </table>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Upcoming Appointments</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Date & Time</th>
+                <th>Client</th>
+                <th>Service Type</th>
+                <th>Mode</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            // Get actual upcoming appointments from the database
+            $upcoming_query = "SELECT b.id, b.status, u.name as client_name, ts.date, ts.start_time, ts.end_time,
+                              st.name as service_type, sm.name as service_mode
+                              FROM bookings b
+                              INNER JOIN users u ON b.client_id = u.id
+                              INNER JOIN time_slots ts ON b.time_slot_id = ts.id
+                              INNER JOIN service_types st ON b.service_type_id = st.id
+                              INNER JOIN service_modes sm ON b.service_mode_id = sm.id
+                              WHERE b.professional_id = ? 
+                              AND ts.date >= CURDATE()
+                              AND b.status IN ('confirmed', 'pending')
+                              ORDER BY ts.date, ts.start_time
+                              LIMIT 10";
+            $stmt = $conn->prepare($upcoming_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $appointments_result = $stmt->get_result();
+            
+            if ($appointments_result->num_rows === 0) {
+                echo '<tr><td colspan="6" class="no-data">No upcoming appointments found.</td></tr>';
+            } else {
+                while ($appointment = $appointments_result->fetch_assoc()) {
+                    ?>
+                    <tr>
+                        <td>
+                            <?php 
+                                echo date('M j, Y', strtotime($appointment['date'])) . ' ' . 
+                                     date('g:i A', strtotime($appointment['start_time'])); 
+                            ?>
+                        </td>
+                        <td><?php echo htmlspecialchars($appointment['client_name']); ?></td>
+                        <td><?php echo htmlspecialchars($appointment['service_type']); ?></td>
+                        <td><?php echo htmlspecialchars($appointment['service_mode']); ?></td>
+                        <td><span class="status-badge status-<?php echo $appointment['status']; ?>"><?php echo ucfirst($appointment['status']); ?></span></td>
+                        <td>
+                            <a href="appointment_details.php?id=<?php echo $appointment['id']; ?>" class="button button-small">Details</a>
+                        </td>
+                    </tr>
+                    <?php
+                }
+            }
+            ?>
+        </tbody>
+    </table>
+</div>
+
+<?php
+// Include footer
+include_once('includes/footer.php');
+?> 

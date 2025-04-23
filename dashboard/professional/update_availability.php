@@ -1,5 +1,9 @@
 <?php
-session_start();
+// This file is for AJAX requests, so we don't need the full header/footer
+// Include necessary authentication
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Check if user is logged in and is a professional
 if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'professional') {

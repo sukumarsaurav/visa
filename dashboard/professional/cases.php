@@ -1,4 +1,9 @@
 <?php
+// Set page variables
+$page_title = "Cases";
+$page_header = "Case Management";
+
+// Start session
 session_start();
 
 // Check if user is logged in and is a professional
@@ -7,202 +12,321 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'professional') {
     exit();
 }
 
+// Get user data
 $user_id = $_SESSION['user_id'];
-// Database connection would be here
-// Get professional's cases
-// $cases = getProfessionalCases($user_id);
+$success_message = '';
+$error_message = '';
+
+// Include database connection
+require_once '../../config/db_connect.php';
+require_once '../../includes/functions.php';
 
 // Handle case status updates
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
     $case_id = $_POST['case_id'];
     $new_status = $_POST['status'];
-    // updateCaseStatus($case_id, $new_status);
-    header("Location: cases.php");
-    exit();
+    
+    try {
+        $stmt = $conn->prepare("UPDATE case_applications SET status = ? WHERE id = ? AND professional_id = ?");
+        $stmt->bind_param("sii", $new_status, $case_id, $user_id);
+        if ($stmt->execute()) {
+            $success_message = "Case status updated successfully.";
+        } else {
+            $error_message = "Failed to update case status.";
+        }
+    } catch (Exception $e) {
+        $error_message = "Error: " . $e->getMessage();
+    }
 }
+
+// Get filter value
+$status_filter = isset($_GET['status']) ? $_GET['status'] : '';
+
+// Page specific CSS
+$page_specific_css = '
+/* Cases-specific styles */
+.filters {
+    margin-bottom: 20px;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 15% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 500px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-new {
+    background-color: #cff4fc;
+    color: #055160;
+}
+
+.status-in_progress {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-pending_documents {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-review {
+    background-color: #e2e3e5;
+    color: #383d41;
+}
+
+.status-approved {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-rejected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+';
+
+// Page specific JavaScript
+$page_js = '
+// Case status filter
+const statusFilter = document.getElementById("status_filter");
+if (statusFilter) {
+    statusFilter.addEventListener("change", function() {
+        window.location.href = "cases.php" + (this.value ? "?status=" + this.value : "");
+    });
+}
+
+// Update status buttons
+const updateStatusBtns = document.querySelectorAll(".update-status-btn");
+updateStatusBtns.forEach(btn => {
+    btn.addEventListener("click", function() {
+        const caseId = this.getAttribute("data-id");
+        document.getElementById("case_id").value = caseId;
+        document.getElementById("statusModal").style.display = "block";
+    });
+});
+
+// Cancel button in modal
+const cancelStatusBtn = document.getElementById("cancelStatusBtn");
+if (cancelStatusBtn) {
+    cancelStatusBtn.addEventListener("click", function() {
+        document.getElementById("statusModal").style.display = "none";
+    });
+}
+
+// Close modal when clicking outside
+window.addEventListener("click", function(event) {
+    const modal = document.getElementById("statusModal");
+    if (event.target === modal) {
+        modal.style.display = "none";
+    }
+});
+';
+
+// Include header
+include_once('includes/header.php');
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cases - Professional Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <img src="<?php echo isset($_SESSION['profile_picture']) ? $_SESSION['profile_picture'] : '../../assets/images/default-avatar.png'; ?>" alt="Profile" class="profile-image">
-                <h3><?php echo htmlspecialchars($_SESSION['name']); ?></h3>
-                <p>Visa Professional</p>
-            </div>
-            
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link">Dashboard</a></li>
-                <li class="nav-item"><a href="cases.php" class="nav-link active">Cases</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="calendar.php" class="nav-link">Calendar</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
-        </div>
-        
-        <div class="main-content">
-            <div class="header">
-                <h1>Case Management</h1>
-                <div class="filters">
-                    <select id="status_filter" onchange="filterCases(this.value)">
-                        <option value="">All Statuses</option>
-                        <option value="new">New</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="pending_documents">Pending Documents</option>
-                        <option value="review">Under Review</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2 class="card-title">Active Cases</h2>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Reference #</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Client</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Visa Type</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Status</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Created</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Actions</th>
-                    </tr>
-                    <?php
-                    // Sample data - would be populated from case_applications table
-                    $active_cases = [
-                        [
-                            'id' => 1,
-                            'reference_number' => 'VISA-2023-001',
-                            'client_name' => 'John Doe',
-                            'visa_type' => 'H-1B Work Visa',
-                            'status' => 'pending_documents',
-                            'created_at' => '2023-06-15'
-                        ]
-                    ];
-                    
-                    foreach ($active_cases as $case): ?>
-                        <tr>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['reference_number']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['client_name']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['visa_type']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                                <div class="status-badge status-<?php echo $case['status']; ?>">
-                                    <?php echo ucwords(str_replace('_', ' ', $case['status'])); ?>
-                                </div>
-                            </td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo date('M j, Y', strtotime($case['created_at'])); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                                <a href="case_details.php?id=<?php echo $case['id']; ?>" class="button button-small">View</a>
-                                <button onclick="openStatusUpdate(<?php echo $case['id']; ?>)" class="button button-small">Update Status</button>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </table>
-            </div>
-            
-            <div class="card">
-                <h2 class="card-title">Completed Cases</h2>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Reference #</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Client</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Visa Type</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Status</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Completed</th>
-                        <th style="text-align: left; padding: 8px; border-bottom: 1px solid #ddd;">Actions</th>
-                    </tr>
-                    <?php
-                    // Sample data - would be populated from case_applications table
-                    $completed_cases = [
-                        [
-                            'id' => 2,
-                            'reference_number' => 'VISA-2022-099',
-                            'client_name' => 'Jane Smith',
-                            'visa_type' => 'B-2 Tourist Visa',
-                            'status' => 'approved',
-                            'completed_at' => '2023-01-10'
-                        ]
-                    ];
-                    
-                    foreach ($completed_cases as $case): ?>
-                        <tr>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['reference_number']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['client_name']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo htmlspecialchars($case['visa_type']); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                                <div class="status-badge status-<?php echo $case['status']; ?>">
-                                    <?php echo ucwords($case['status']); ?>
-                                </div>
-                            </td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;"><?php echo date('M j, Y', strtotime($case['completed_at'])); ?></td>
-                            <td style="padding: 8px; border-bottom: 1px solid #ddd;">
-                                <a href="case_details.php?id=<?php echo $case['id']; ?>" class="button button-small">View</a>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </table>
-            </div>
-        </div>
+<h1 class="page-title"><?php echo $page_header; ?></h1>
+
+<?php if ($success_message): ?>
+    <div class="alert alert-success">
+        <?php echo $success_message; ?>
     </div>
-    
-    <!-- Status Update Modal -->
-    <div id="statusModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h3>Update Case Status</h3>
-            <form id="statusUpdateForm" method="POST">
-                <input type="hidden" name="update_status" value="1">
-                <input type="hidden" name="case_id" id="case_id">
-                
-                <div class="form-group">
-                    <label for="status">New Status</label>
-                    <select name="status" id="status" class="form-control" required>
-                        <option value="new">New</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="pending_documents">Pending Documents</option>
-                        <option value="review">Under Review</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                    </select>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="button">Update</button>
-                    <button type="button" onclick="closeStatusModal()" class="button button-secondary">Cancel</button>
-                </div>
-            </form>
-        </div>
+<?php endif; ?>
+
+<?php if ($error_message): ?>
+    <div class="alert alert-danger">
+        <?php echo $error_message; ?>
     </div>
-    
-    <script>
-        function openStatusUpdate(caseId) {
-            document.getElementById('case_id').value = caseId;
-            document.getElementById('statusModal').style.display = 'block';
-        }
-        
-        function closeStatusModal() {
-            document.getElementById('statusModal').style.display = 'none';
-        }
-        
-        function filterCases(status) {
-            // Implement case filtering based on status
-            window.location.href = 'cases.php' + (status ? '?status=' + status : '');
-        }
-        
-        // Close modal if clicking outside
-        window.onclick = function(event) {
-            if (event.target == document.getElementById('statusModal')) {
-                closeStatusModal();
+<?php endif; ?>
+
+<div class="card">
+    <h2 class="card-title">Active Cases</h2>
+    <div class="filters">
+        <select id="status_filter">
+            <option value="" <?php echo $status_filter == '' ? 'selected' : ''; ?>>All Statuses</option>
+            <option value="new" <?php echo $status_filter == 'new' ? 'selected' : ''; ?>>New</option>
+            <option value="in_progress" <?php echo $status_filter == 'in_progress' ? 'selected' : ''; ?>>In Progress</option>
+            <option value="pending_documents" <?php echo $status_filter == 'pending_documents' ? 'selected' : ''; ?>>Pending Documents</option>
+            <option value="review" <?php echo $status_filter == 'review' ? 'selected' : ''; ?>>Under Review</option>
+            <option value="approved" <?php echo $status_filter == 'approved' ? 'selected' : ''; ?>>Approved</option>
+            <option value="rejected" <?php echo $status_filter == 'rejected' ? 'selected' : ''; ?>>Rejected</option>
+        </select>
+    </div>
+
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Reference #</th>
+                <th>Client</th>
+                <th>Visa Type</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            // Get active cases from database
+            $where_clause = "";
+            if (!empty($status_filter)) {
+                $where_clause = " AND ca.status = '$status_filter'";
+            } else {
+                $where_clause = " AND ca.status NOT IN ('approved', 'rejected')";
             }
-        }
-    </script>
-</body>
-</html> 
+            
+            $active_cases_query = "SELECT ca.*, u.name as client_name, vt.name as visa_type_name
+                                FROM case_applications ca
+                                INNER JOIN users u ON ca.client_id = u.id
+                                INNER JOIN visa_types vt ON ca.visa_type_id = vt.id
+                                WHERE ca.professional_id = ? $where_clause
+                                AND ca.deleted_at IS NULL
+                                ORDER BY ca.created_at DESC";
+            
+            $stmt = $conn->prepare($active_cases_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result->num_rows === 0) {
+                echo '<tr><td colspan="6" class="no-data">No active cases found.</td></tr>';
+            } else {
+                while ($case = $result->fetch_assoc()) {
+                    ?>
+            <tr>
+                <td><?php echo htmlspecialchars($case['reference_number']); ?></td>
+                <td><?php echo htmlspecialchars($case['client_name']); ?></td>
+                <td><?php echo htmlspecialchars($case['visa_type_name']); ?></td>
+                <td>
+                    <div class="status-badge status-<?php echo $case['status']; ?>">
+                        <?php echo ucwords(str_replace('_', ' ', $case['status'])); ?>
+                    </div>
+                </td>
+                <td><?php echo date('M j, Y', strtotime($case['created_at'])); ?></td>
+                <td>
+                    <a href="case_details.php?id=<?php echo $case['id']; ?>" class="button button-small">View</a>
+                    <button class="update-status-btn button button-small" data-id="<?php echo $case['id']; ?>">Update Status</button>
+                </td>
+            </tr>
+            <?php
+                }
+            }
+            ?>
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Completed Cases</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Reference #</th>
+                <th>Client</th>
+                <th>Visa Type</th>
+                <th>Status</th>
+                <th>Completed</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            // Get completed cases from database
+            $completed_cases_query = "SELECT ca.*, u.name as client_name, vt.name as visa_type_name
+                                    FROM case_applications ca
+                                    INNER JOIN users u ON ca.client_id = u.id
+                                    INNER JOIN visa_types vt ON ca.visa_type_id = vt.id
+                                    WHERE ca.professional_id = ? 
+                                    AND ca.status IN ('approved', 'rejected')
+                                    AND ca.deleted_at IS NULL
+                                    ORDER BY ca.updated_at DESC
+                                    LIMIT 10";
+            
+            $stmt = $conn->prepare($completed_cases_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result->num_rows === 0) {
+                echo '<tr><td colspan="6" class="no-data">No completed cases found.</td></tr>';
+            } else {
+                while ($case = $result->fetch_assoc()) {
+                    ?>
+            <tr>
+                <td><?php echo htmlspecialchars($case['reference_number']); ?></td>
+                <td><?php echo htmlspecialchars($case['client_name']); ?></td>
+                <td><?php echo htmlspecialchars($case['visa_type_name']); ?></td>
+                <td>
+                    <div class="status-badge status-<?php echo $case['status']; ?>">
+                        <?php echo ucwords(str_replace('_', ' ', $case['status'])); ?>
+                    </div>
+                </td>
+                <td><?php echo date('M j, Y', strtotime($case['updated_at'])); ?></td>
+                <td>
+                    <a href="case_details.php?id=<?php echo $case['id']; ?>" class="button button-small">View</a>
+                </td>
+            </tr>
+            <?php
+                }
+            }
+            ?>
+        </tbody>
+    </table>
+</div>
+
+<!-- Status Update Modal -->
+<div id="statusModal" class="modal">
+    <div class="modal-content">
+        <h3>Update Case Status</h3>
+        <form id="statusUpdateForm" method="POST">
+            <input type="hidden" name="update_status" value="1">
+            <input type="hidden" name="case_id" id="case_id">
+
+            <div class="form-group">
+                <label for="status">New Status</label>
+                <select name="status" id="status" class="form-control" required>
+                    <option value="new">New</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="pending_documents">Pending Documents</option>
+                    <option value="review">Under Review</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="button">Update</button>
+                <button type="button" id="cancelStatusBtn" class="button button-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<?php
+// Include footer
+include_once('includes/footer.php');
+?>

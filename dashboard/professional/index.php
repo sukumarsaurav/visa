@@ -1,289 +1,357 @@
 <?php
-session_start();
+// Set page variables
+$page_title = "Dashboard";
+$page_header = "Professional Dashboard";
 
-// Check if user is logged in and is a professional
-if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'professional') {
-    header("Location: ../../login.php");
-    exit();
-}
+// Include header (handles session and authentication)
+require_once 'includes/header.php';
 
+// Get user_id from session (already verified in header.php)
 $user_id = $_SESSION['user_id'];
 
-// Include database connection
-require_once '../../config/db_connect.php';
+// Get dashboard statistics
+$stats = [
+    'total_cases' => 0,
+    'active_cases' => 0,
+    'pending_documents' => 0,
+    'upcoming_appointments' => 0,
+    'unread_messages' => 0
+];
 
-try {
-    // Get professional data from both users and professionals tables using JOIN
-    $stmt = $conn->prepare("
-        SELECT u.*, p.*, 
-               p.profile_image as prof_image,
-               p.verification_status,
-               p.availability_status
-        FROM users u 
-        JOIN professionals p ON u.id = p.user_id 
-        WHERE u.id = ? AND u.user_type = 'professional'
-    ");
-    
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $professional = $result->fetch_assoc();
+// Query for total cases
+$query = "SELECT COUNT(*) as count FROM case_applications 
+          WHERE professional_id = ? AND deleted_at IS NULL";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $stats['total_cases'] = $row['count'];
+}
 
-    if (!$professional) {
-        // If no professional data found, redirect to login
-        session_destroy();
-        header("Location: ../../login.php");
-        exit();
-    }
+// Query for active cases
+$query = "SELECT COUNT(*) as count FROM case_applications 
+          WHERE professional_id = ? AND status IN ('in_progress', 'pending_documents', 'review') 
+          AND deleted_at IS NULL";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $stats['active_cases'] = $row['count'];
+}
 
-    // Store essential data in session if not already stored
-    $_SESSION['name'] = $professional['name'];
-    $_SESSION['email'] = $professional['email'];
-    $_SESSION['profile_picture'] = $professional['prof_image'] ?? null;
-    $_SESSION['verification_status'] = $professional['verification_status'];
-    $_SESSION['availability_status'] = $professional['availability_status'];
+// Query for pending documents
+$query = "SELECT COUNT(*) as count FROM case_applications 
+          WHERE professional_id = ? AND status = 'pending_documents' 
+          AND deleted_at IS NULL";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $stats['pending_documents'] = $row['count'];
+}
 
-} catch(Exception $e) {
-    // Log error and show generic message
-    error_log("Database Error: " . $e->getMessage());
-    $error_message = "System is temporarily unavailable. Please try again later.";
+// Query for upcoming appointments
+$query = "SELECT COUNT(*) as count FROM bookings b
+          INNER JOIN time_slots ts ON b.time_slot_id = ts.id 
+          WHERE b.professional_id = ? AND b.status = 'confirmed' 
+          AND ts.date >= CURDATE() AND b.deleted_at IS NULL";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $stats['upcoming_appointments'] = $row['count'];
+}
+
+// Query for unread messages
+$query = "SELECT COUNT(*) as count FROM chat_messages cm 
+          INNER JOIN conversations c ON cm.conversation_id = c.id 
+          WHERE c.professional_id = ? AND cm.is_read = 0 
+          AND cm.sender_id != ? AND cm.deleted_at IS NULL";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("ii", $user_id, $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $stats['unread_messages'] = $row['count'];
+}
+
+// Get recent cases
+$recent_cases = [];
+$query = "SELECT ca.*, u.name as client_name, vt.name as visa_type_name
+          FROM case_applications ca
+          INNER JOIN users u ON ca.client_id = u.id
+          INNER JOIN visa_types vt ON ca.visa_type_id = vt.id
+          WHERE ca.professional_id = ? AND ca.deleted_at IS NULL
+          ORDER BY ca.updated_at DESC LIMIT 5";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $recent_cases[] = $row;
+}
+
+// Get upcoming appointments
+$upcoming_appointments = [];
+$query = "SELECT b.*, u.name as client_name, ts.date, ts.start_time, ts.end_time,
+          st.name as service_type, sm.name as service_mode
+          FROM bookings b
+          INNER JOIN users u ON b.client_id = u.id
+          INNER JOIN time_slots ts ON b.time_slot_id = ts.id
+          INNER JOIN service_types st ON b.service_type_id = st.id
+          INNER JOIN service_modes sm ON b.service_mode_id = sm.id
+          WHERE b.professional_id = ? AND b.status IN ('pending', 'confirmed')
+          AND ts.date >= CURDATE() AND b.deleted_at IS NULL
+          ORDER BY ts.date, ts.start_time LIMIT 5";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $upcoming_appointments[] = $row;
 }
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Professional Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <img src="<?php echo isset($professional['prof_image']) ? htmlspecialchars($professional['prof_image']) : '../../assets/images/default-avatar.png'; ?>" 
-                     alt="Profile" class="profile-image">
-                <h3><?php echo htmlspecialchars($professional['name']); ?></h3>
-                <p>Visa Professional</p>
-                <?php if ($professional['verification_status'] === 'verified'): ?>
-                    <span class="verification-badge">Verified</span>
-                <?php endif; ?>
+<!-- Stats Cards -->
+<div class="stats-container">
+    <div class="row">
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="icon icon-cases"></i>
             </div>
-            
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link active">Dashboard</a></li>
-                <li class="nav-item"><a href="cases.php" class="nav-link">Cases</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="calendar.php" class="nav-link">Calendar</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
+            <div class="stat-info">
+                <h3><?php echo $stats['total_cases']; ?></h3>
+                <p>Total Cases</p>
+            </div>
         </div>
         
-        <div class="main-content">
-            <div class="header">
-                <h1>Welcome, <?php echo htmlspecialchars($professional['name']); ?></h1>
-                <div class="status-selector">
-                    <select id="availability_status" 
-                            onchange="updateAvailability(this.value)"
-                            data-current="<?php echo htmlspecialchars($professional['availability_status']); ?>">
-                        <option value="available" <?php echo $professional['availability_status'] === 'available' ? 'selected' : ''; ?>>Available</option>
-                        <option value="busy" <?php echo $professional['availability_status'] === 'busy' ? 'selected' : ''; ?>>Busy</option>
-                        <option value="unavailable" <?php echo $professional['availability_status'] === 'unavailable' ? 'selected' : ''; ?>>Unavailable</option>
-                    </select>
-                </div>
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="icon icon-active"></i>
             </div>
-            
-            <?php if (isset($error_message)): ?>
-                <div class="alert error">
-                    <?php echo htmlspecialchars($error_message); ?>
-                </div>
-            <?php endif; ?>
-            
-            <?php
-            // Only show active cases if professional is verified
-            if ($professional['verification_status'] === 'verified'):
-            ?>
-            <div class="card">
-                <h2 class="card-title">Active Cases</h2>
-                <div class="case-summary">
-                    <?php
-                    try {
-                        // Get active cases from database
-                        $stmt = $conn->prepare("
-                            SELECT ca.*, u.name as client_name, vt.name as visa_type_name
-                            FROM case_applications ca
-                            JOIN users u ON ca.client_id = u.id
-                            JOIN visa_types vt ON ca.visa_type_id = vt.id
-                            WHERE ca.professional_id = ?
-                            AND ca.status NOT IN ('approved', 'rejected')
-                            AND ca.deleted_at IS NULL
-                            ORDER BY ca.created_at DESC
-                            LIMIT 5
-                        ");
-                        
-                        $stmt->bind_param("i", $user_id);
-                        $stmt->execute();
-                        $result = $stmt->get_result();
-                        $active_cases = $result->fetch_all(MYSQLI_ASSOC);
-                        
-                        foreach ($active_cases as $case): ?>
-                            <div class="case-item">
-                                <div class="status-badge status-<?php echo htmlspecialchars($case['status']); ?>">
-                                    <?php echo ucwords(str_replace('_', ' ', $case['status'])); ?>
-                                </div>
-                                <h3><?php echo htmlspecialchars($case['visa_type_name']); ?></h3>
-                                <p>Reference: <?php echo htmlspecialchars($case['reference_number']); ?></p>
-                                <p>Client: <?php echo htmlspecialchars($case['client_name']); ?></p>
-                                <p>Created: <?php echo date('M j, Y', strtotime($case['created_at'])); ?></p>
-                                <a href="case_details.php?ref=<?php echo urlencode($case['reference_number']); ?>" class="button">View Details</a>
-                            </div>
-                        <?php endforeach;
-                        
-                        if (empty($active_cases)): ?>
-                            <p class="no-data">No active cases at the moment.</p>
-                        <?php endif;
-                        
-                    } catch(Exception $e) {
-                        error_log("Database Error: " . $e->getMessage());
-                        echo '<p class="error">Unable to load active cases. Please try again later.</p>';
-                    }
-                    ?>
-                </div>
+            <div class="stat-info">
+                <h3><?php echo $stats['active_cases']; ?></h3>
+                <p>Active Cases</p>
             </div>
-            <?php endif; ?>
-            
-            <div class="card">
-                <h2 class="card-title">Today's Appointments</h2>
-                <div class="appointments-list">
-                    <?php
-                    try {
-                        // Get today's appointments from database
-                        $stmt = $conn->prepare("
-                            SELECT b.*, u.name as client_name, 
-                                   st.name as service_type_name,
-                                   sm.name as service_mode_name,
-                                   ts.start_time, ts.end_time
-                            FROM bookings b
-                            JOIN users u ON b.client_id = u.id
-                            JOIN service_types st ON b.service_type_id = st.id
-                            JOIN service_modes sm ON b.service_mode_id = sm.id
-                            JOIN time_slots ts ON b.time_slot_id = ts.id
-                            WHERE b.professional_id = ?
-                            AND DATE(ts.date) = CURDATE()
-                            AND b.status = 'confirmed'
-                            AND b.deleted_at IS NULL
-                            ORDER BY ts.start_time ASC
-                        ");
-                        
-                        $stmt->bind_param("i", $user_id);
-                        $stmt->execute();
-                        $result = $stmt->get_result();
-                        $appointments = $result->fetch_all(MYSQLI_ASSOC);
-                        
-                        foreach ($appointments as $appointment): ?>
-                            <div class="appointment-item">
-                                <div class="time">
-                                    <?php echo date('H:i', strtotime($appointment['start_time'])); ?>
-                                </div>
-                                <div class="details">
-                                    <h4><?php echo htmlspecialchars($appointment['client_name']); ?></h4>
-                                    <p><?php echo htmlspecialchars($appointment['service_type_name']); ?> - 
-                                       <?php echo htmlspecialchars($appointment['service_mode_name']); ?></p>
-                                </div>
-                                <?php if ($appointment['service_mode_name'] === 'Video Call'): ?>
-                                    <a href="meeting.php?booking_id=<?php echo $appointment['id']; ?>" class="button">Join Meeting</a>
-                                <?php endif; ?>
-                            </div>
-                        <?php endforeach;
-                        
-                        if (empty($appointments)): ?>
-                            <p class="no-data">No appointments scheduled for today.</p>
-                        <?php endif;
-                        
-                    } catch(Exception $e) {
-                        error_log("Database Error: " . $e->getMessage());
-                        echo '<p class="error">Unable to load appointments. Please try again later.</p>';
-                    }
-                    ?>
-                </div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="icon icon-documents"></i>
             </div>
-            
-            <div class="card">
-                <h2 class="card-title">Recent Updates</h2>
-                <div class="updates-list">
-                    <?php
-                    try {
-                        // Get recent notifications from database
-                        $stmt = $conn->prepare("
-                            SELECT *
-                            FROM notifications
-                            WHERE user_id = ?
-                            AND deleted_at IS NULL
-                            ORDER BY created_at DESC
-                            LIMIT 5
-                        ");
-                        
-                        $stmt->bind_param("i", $user_id);
-                        $stmt->execute();
-                        $result = $stmt->get_result();
-                        $notifications = $result->fetch_all(MYSQLI_ASSOC);
-                        
-                        foreach ($notifications as $notification): ?>
-                            <div class="update-item">
-                                <h4><?php echo htmlspecialchars($notification['title']); ?></h4>
-                                <p><?php echo htmlspecialchars($notification['message']); ?></p>
-                                <small><?php echo date('F j, Y g:i A', strtotime($notification['created_at'])); ?></small>
-                            </div>
-                        <?php endforeach;
-                        
-                        if (empty($notifications)): ?>
-                            <p class="no-data">No recent updates.</p>
-                        <?php endif;
-                        
-                    } catch(Exception $e) {
-                        error_log("Database Error: " . $e->getMessage());
-                        echo '<p class="error">Unable to load notifications. Please try again later.</p>';
-                    }
-                    ?>
-                </div>
+            <div class="stat-info">
+                <h3><?php echo $stats['pending_documents']; ?></h3>
+                <p>Pending Documents</p>
+            </div>
+        </div>
+        
+        <div class="stat-card">
+            <div class="stat-icon">
+                <i class="icon icon-calendar"></i>
+            </div>
+            <div class="stat-info">
+                <h3><?php echo $stats['upcoming_appointments']; ?></h3>
+                <p>Upcoming Appointments</p>
             </div>
         </div>
     </div>
+</div>
+
+<!-- Recent Cases -->
+<div class="card">
+    <h2 class="card-title">Recent Cases</h2>
     
-    <script>
-        function updateAvailability(status) {
-            fetch('update_availability.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    status: status
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Show success message
-                    alert('Availability status updated successfully');
-                } else {
-                    // Show error message
-                    alert('Failed to update availability status');
-                    // Reset select to previous value
-                    const select = document.getElementById('availability_status');
-                    select.value = select.getAttribute('data-current');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('An error occurred while updating availability status');
-                // Reset select to previous value
-                const select = document.getElementById('availability_status');
-                select.value = select.getAttribute('data-current');
-            });
+    <?php if (empty($recent_cases)): ?>
+        <p class="no-data">No recent cases found.</p>
+    <?php else: ?>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Reference</th>
+                        <th>Client</th>
+                        <th>Visa Type</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($recent_cases as $case): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($case['reference_number']); ?></td>
+                            <td><?php echo htmlspecialchars($case['client_name']); ?></td>
+                            <td><?php echo htmlspecialchars($case['visa_type_name']); ?></td>
+                            <td>
+                                <span class="status-badge status-<?php echo htmlspecialchars($case['status']); ?>">
+                                    <?php echo ucfirst(str_replace('_', ' ', $case['status'])); ?>
+                                </span>
+                            </td>
+                            <td><?php echo date('M j, Y', strtotime($case['updated_at'])); ?></td>
+                            <td>
+                                <a href="case_details.php?id=<?php echo $case['id']; ?>" class="button button-small">View</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer">
+            <a href="cases.php" class="button">View All Cases</a>
+        </div>
+    <?php endif; ?>
+</div>
+
+<!-- Upcoming Appointments -->
+<div class="card">
+    <h2 class="card-title">Upcoming Appointments</h2>
+    
+    <?php if (empty($upcoming_appointments)): ?>
+        <p class="no-data">No upcoming appointments found.</p>
+    <?php else: ?>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Client</th>
+                        <th>Service</th>
+                        <th>Mode</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($upcoming_appointments as $appointment): ?>
+                        <tr>
+                            <td><?php echo date('M j, Y', strtotime($appointment['date'])); ?></td>
+                            <td>
+                                <?php 
+                                    echo date('g:i A', strtotime($appointment['start_time'])) . ' - ' . 
+                                         date('g:i A', strtotime($appointment['end_time'])); 
+                                ?>
+                            </td>
+                            <td><?php echo htmlspecialchars($appointment['client_name']); ?></td>
+                            <td><?php echo htmlspecialchars($appointment['service_type']); ?></td>
+                            <td><?php echo htmlspecialchars($appointment['service_mode']); ?></td>
+                            <td>
+                                <span class="status-badge status-<?php echo htmlspecialchars($appointment['status']); ?>">
+                                    <?php echo ucfirst($appointment['status']); ?>
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer">
+            <a href="calendar.php" class="button">View Calendar</a>
+        </div>
+    <?php endif; ?>
+</div>
+
+<!-- Custom CSS for this page -->
+<style>
+    .stats-container {
+        margin-bottom: 30px;
+        width: 100%;
+    }
+    
+    .row {
+        display: flex;
+        flex-wrap: wrap;
+        margin: 0 -15px;
+        width: 100%;
+    }
+    
+    .stat-card {
+        flex: 1;
+        min-width: 200px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin: 0 15px 30px;
+        display: flex;
+        align-items: center;
+    }
+    
+    .stat-icon {
+        width: 50px;
+        height: 50px;
+        background-color: #e3f2fd;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 15px;
+        color: #3498db;
+        font-size: 24px;
+    }
+    
+    .stat-info h3 {
+        margin: 0;
+        font-size: 24px;
+        color: #2c3e50;
+    }
+    
+    .stat-info p {
+        margin: 5px 0 0;
+        color: #7f8c8d;
+        font-size: 14px;
+    }
+    
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .table th, .table td {
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .table th {
+        font-weight: 500;
+        color: #2c3e50;
+        background-color: #f5f7fa;
+    }
+    
+    .card-footer {
+        margin-top: 20px;
+        text-align: right;
+    }
+    
+    .no-data {
+        padding: 20px;
+        text-align: center;
+        color: #7f8c8d;
+        font-style: italic;
+    }
+    
+    @media (max-width: 768px) {
+        .stat-card {
+            min-width: calc(50% - 30px);
         }
-    </script>
-</body>
-</html>
+    }
+    
+    @media (max-width: 576px) {
+        .stat-card {
+            min-width: calc(100% - 30px);
+        }
+        
+        .table-responsive {
+            overflow-x: auto;
+        }
+    }
+</style>
+
+<?php
+// Include footer
+require_once 'includes/footer.php';
+?>

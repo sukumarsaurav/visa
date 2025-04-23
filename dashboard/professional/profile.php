@@ -1,5 +1,14 @@
 <?php
+// Start session
 session_start();
+
+// Set page variables
+$page_title = "Professional Profile";
+$page_header = "Professional Profile";
+
+// Database connections and includes
+require_once '../../config/db_connect.php';
+require_once '../../includes/functions.php';
 
 // Check if user is logged in and is a professional
 if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'professional') {
@@ -9,1039 +18,833 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'professional') {
 
 // Get user data
 $user_id = $_SESSION['user_id'];
-$professional = null;
-$specializations = [];
-$languages = [];
+
+// Get user and professional data
+$user_query = "SELECT u.*, p.* FROM users u
+              LEFT JOIN professionals p ON u.id = p.user_id
+              WHERE u.id = ? AND u.user_type = 'professional'";
+$stmt = $conn->prepare($user_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if ($result->num_rows === 0) {
+    // User not found or not a professional
+    header("Location: ../../login.php");
+    exit();
+}
+
+$user = $result->fetch_assoc();
+
+// Get current specializations
+$spec_query = "SELECT s.id, s.name FROM specializations s
+              INNER JOIN professional_specializations ps ON s.id = ps.specialization_id
+              WHERE ps.professional_id = ?";
+$stmt = $conn->prepare($spec_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$spec_result = $stmt->get_result();
+$current_specializations = [];
+while ($spec = $spec_result->fetch_assoc()) {
+    $current_specializations[$spec['id']] = $spec['name'];
+}
+
+// Get all specializations for the dropdown
+$all_spec_query = "SELECT id, name FROM specializations WHERE is_active = 1 ORDER BY name";
+$all_spec_result = $conn->query($all_spec_query);
+$all_specializations = [];
+while ($spec = $all_spec_result->fetch_assoc()) {
+    $all_specializations[$spec['id']] = $spec['name'];
+}
+
+// Get current languages
+$lang_query = "SELECT l.id, l.name FROM languages l
+              INNER JOIN professional_languages pl ON l.id = pl.language_id
+              WHERE pl.professional_id = ?";
+$stmt = $conn->prepare($lang_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$lang_result = $stmt->get_result();
+$current_languages = [];
+while ($lang = $lang_result->fetch_assoc()) {
+    $current_languages[$lang['id']] = $lang['name'];
+}
+
+// Get all languages for the dropdown
+$all_lang_query = "SELECT id, name FROM languages ORDER BY name";
+$all_lang_result = $conn->query($all_lang_query);
+$all_languages = [];
+while ($lang = $all_lang_result->fetch_assoc()) {
+    $all_languages[$lang['id']] = $lang['name'];
+}
+
+// Get all service types
+$service_types_query = "SELECT * FROM service_types WHERE is_active = 1 ORDER BY name";
+$service_types_result = $conn->query($service_types_query);
+$service_types = [];
+while ($type = $service_types_result->fetch_assoc()) {
+    $service_types[$type['id']] = $type;
+}
+
+// Get professional's current services
+$prof_services_query = "SELECT ps.*, st.name as type_name 
+                       FROM professional_services ps
+                       INNER JOIN service_types st ON ps.service_type_id = st.id
+                       WHERE ps.professional_id = ?";
+$stmt = $conn->prepare($prof_services_query);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$prof_services_result = $stmt->get_result();
+$professional_services = [];
+while ($service = $prof_services_result->fetch_assoc()) {
+    $professional_services[$service['service_type_id']] = $service;
+}
+
+// Form submission handling
 $success_message = '';
 $error_message = '';
 
-// Include database connection
-require_once '../../config/db_connect.php';
-
-try {
-    // Check if service_type_modes table has data - if not, insert sample data
-    $stmt = $conn->prepare("SELECT COUNT(*) as count FROM service_type_modes");
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result->fetch_assoc();
+// Handle profile update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
+    $name = $_POST['name'];
+    $email = $_POST['email'];
+    $phone = $_POST['phone'];
+    $bio = $_POST['bio'];
+    $years_experience = $_POST['years_experience'];
+    $license_number = $_POST['license_number'];
+    $location = $_POST['location'];
+    $consultation_fee = isset($_POST['consultation_fee']) ? $_POST['consultation_fee'] : 0;
     
-    if ($row['count'] == 0) {
-        // Start a transaction
-        $conn->begin_transaction();
-        
+    // Check if email is already in use by another user
+    $check_email_query = "SELECT id FROM users WHERE email = ? AND id != ?";
+    $stmt = $conn->prepare($check_email_query);
+    $stmt->bind_param("si", $email, $user_id);
+    $stmt->execute();
+    $email_check_result = $stmt->get_result();
+    
+    if ($email_check_result->num_rows > 0) {
+        $error_message = "Email is already in use by another user.";
+    } else {
         try {
-            // Get service types and modes IDs first
-            $service_types = [];
-            $stmt = $conn->prepare("SELECT id, name FROM service_types WHERE is_active = 1");
+            // Start transaction
+            $conn->begin_transaction();
+            
+            // Update user table
+            $update_user_query = "UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?";
+            $stmt = $conn->prepare($update_user_query);
+            $stmt->bind_param("sssi", $name, $email, $phone, $user_id);
             $stmt->execute();
-            $result = $stmt->get_result();
-            while ($row = $result->fetch_assoc()) {
-                $service_types[$row['name']] = $row['id'];
-            }
             
-            $service_modes = [];
-            $stmt = $conn->prepare("SELECT id, name FROM service_modes WHERE is_active = 1");
+            // Update professional table
+            $update_prof_query = "UPDATE professionals SET bio = ?, years_experience = ?, license_number = ?, location = ?, consultation_fee = ? WHERE user_id = ?";
+            $stmt = $conn->prepare($update_prof_query);
+            $stmt->bind_param("sisidi", $bio, $years_experience, $license_number, $location, $consultation_fee, $user_id);
             $stmt->execute();
-            $result = $stmt->get_result();
-            while ($row = $result->fetch_assoc()) {
-                $service_modes[$row['name']] = $row['id'];
-            }
             
-            // Insert default mappings
-            $stmt = $conn->prepare("INSERT INTO service_type_modes (service_type_id, service_mode_id, is_included) VALUES (?, ?, 1)");
-            
-            // DIY - Document Review
-            if (isset($service_types['DIY']) && isset($service_modes['Document Review'])) {
-                $stmt->bind_param("ii", $service_types['DIY'], $service_modes['Document Review']);
-                $stmt->execute();
-            }
-            
-            // Consultation - All communication modes
-            if (isset($service_types['Consultation'])) {
-                $consultation_id = $service_types['Consultation'];
-                $communication_modes = ['Chat', 'Video Call', 'Phone Call', 'Email'];
+            // Handle file upload for profile image
+            if (isset($_FILES['profile_image']) && $_FILES['profile_image']['error'] == 0) {
+                $allowed = ['jpg', 'jpeg', 'png', 'gif'];
+                $filename = $_FILES['profile_image']['name'];
+                $file_ext = pathinfo($filename, PATHINFO_EXTENSION);
                 
-                foreach ($communication_modes as $mode_name) {
-                    if (isset($service_modes[$mode_name])) {
-                        $stmt->bind_param("ii", $consultation_id, $service_modes[$mode_name]);
-                        $stmt->execute();
+                if (in_array(strtolower($file_ext), $allowed)) {
+                    // Create uploads directory if it doesn't exist
+                    $upload_dir = '../uploads/profiles/';
+                    if (!file_exists($upload_dir)) {
+                        mkdir($upload_dir, 0755, true);
                     }
+                    
+                    // Generate unique filename
+                    $new_filename = 'prof_' . $user_id . '_' . time() . '.' . $file_ext;
+                    $upload_path = $upload_dir . $new_filename;
+                    
+                    if (move_uploaded_file($_FILES['profile_image']['tmp_name'], $upload_path)) {
+                        $profile_image = $new_filename;
+                        
+                        // Update the profile image in the database
+                        $update_img_query = "UPDATE professionals SET profile_image = ? WHERE user_id = ?";
+                        $stmt = $conn->prepare($update_img_query);
+                        $stmt->bind_param("si", $profile_image, $user_id);
+                        $stmt->execute();
+                    } else {
+                        $error_message = "Failed to upload profile image. Please try again.";
+                        throw new Exception($error_message);
+                    }
+                } else {
+                    $error_message = "Invalid file type. Allowed types: JPG, JPEG, PNG, GIF.";
+                    throw new Exception($error_message);
                 }
             }
             
-            // Complete Process - All modes
-            if (isset($service_types['Complete Process'])) {
-                $complete_process_id = $service_types['Complete Process'];
+            // Handle specializations
+            $selected_specializations = isset($_POST['specializations']) ? $_POST['specializations'] : [];
+            
+            // Delete existing specializations
+            $delete_spec_query = "DELETE FROM professional_specializations WHERE professional_id = ?";
+            $stmt = $conn->prepare($delete_spec_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            
+            // Insert new specializations
+            if (!empty($selected_specializations)) {
+                $insert_spec_query = "INSERT INTO professional_specializations (professional_id, specialization_id) VALUES (?, ?)";
+                $stmt = $conn->prepare($insert_spec_query);
                 
-                foreach ($service_modes as $mode_name => $mode_id) {
-                    $stmt->bind_param("ii", $complete_process_id, $mode_id);
+                foreach ($selected_specializations as $spec_id) {
+                    $stmt->bind_param("ii", $user_id, $spec_id);
                     $stmt->execute();
                 }
             }
             
-            // Commit the transaction
+            // Handle languages
+            $selected_languages = isset($_POST['languages']) ? $_POST['languages'] : [];
+            
+            // Delete existing languages
+            $delete_lang_query = "DELETE FROM professional_languages WHERE professional_id = ?";
+            $stmt = $conn->prepare($delete_lang_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            
+            // Insert new languages
+            if (!empty($selected_languages)) {
+                $insert_lang_query = "INSERT INTO professional_languages (professional_id, language_id) VALUES (?, ?)";
+                $stmt = $conn->prepare($insert_lang_query);
+                
+                foreach ($selected_languages as $lang_id) {
+                    $stmt->bind_param("ii", $user_id, $lang_id);
+                    $stmt->execute();
+                }
+            }
+            
             $conn->commit();
+            $success_message = "Profile updated successfully!";
+            
+            // Refresh user data
+            $stmt = $conn->prepare($user_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $user = $result->fetch_assoc();
+            
+            // Refresh specializations
+            $stmt = $conn->prepare($spec_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $spec_result = $stmt->get_result();
+            $current_specializations = [];
+            while ($spec = $spec_result->fetch_assoc()) {
+                $current_specializations[$spec['id']] = $spec['name'];
+            }
+            
+            // Refresh languages
+            $stmt = $conn->prepare($lang_query);
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $lang_result = $stmt->get_result();
+            $current_languages = [];
+            while ($lang = $lang_result->fetch_assoc()) {
+                $current_languages[$lang['id']] = $lang['name'];
+            }
+            
         } catch (Exception $e) {
-            // Rollback in case of error
             $conn->rollback();
-            error_log("Error populating service_type_modes: " . $e->getMessage());
+            $error_message = "Error updating profile: " . $e->getMessage();
         }
     }
-    
-    // Fetch professional data from both users and professionals tables using JOIN
-    $stmt = $conn->prepare("
-        SELECT u.*, p.*,
-               p.profile_image as prof_image,
-               p.verification_status,
-               p.availability_status
-        FROM users u 
-        JOIN professionals p ON u.id = p.user_id 
-        WHERE u.id = ? AND u.user_type = 'professional'
-    ");
-    
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $professional = $result->fetch_assoc();
-
-    if (!$professional) {
-        $error_message = "Professional profile not found.";
-    } else {
-        // Fetch professional specializations
-        $stmt = $conn->prepare("
-            SELECT s.id, s.name 
-            FROM specializations s
-            JOIN professional_specializations ps ON s.id = ps.specialization_id
-            WHERE ps.professional_id = ?
-        ");
-        $stmt->bind_param("i", $professional['id']);
-        $stmt->execute();
-        $specializations_result = $stmt->get_result();
-        
-        while ($row = $specializations_result->fetch_assoc()) {
-            $specializations[] = $row;
-        }
-        
-        // Fetch professional languages
-        $stmt = $conn->prepare("
-            SELECT l.id, l.name, pl.proficiency_level 
-            FROM languages l
-            JOIN professional_languages pl ON l.id = pl.language_id
-            WHERE pl.professional_id = ?
-        ");
-        $stmt->bind_param("i", $professional['id']);
-        $stmt->execute();
-        $languages_result = $stmt->get_result();
-        
-        while ($row = $languages_result->fetch_assoc()) {
-            $languages[] = $row;
-        }
-    }
-    
-    // Fetch all available specializations
-    $all_specializations = [];
-    $stmt = $conn->prepare("SELECT id, name FROM specializations WHERE is_active = 1");
-    $stmt->execute();
-    $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) {
-        $all_specializations[] = $row;
-    }
-    
-    // Fetch all available languages
-    $all_languages = [];
-    $stmt = $conn->prepare("SELECT id, name FROM languages WHERE is_active = 1");
-    $stmt->execute();
-    $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) {
-        $all_languages[] = $row;
-    }
-    
-    // Get current professional specializations IDs for easier checking in the form
-    $current_specializations = array_column($specializations, 'id');
-    
-    // Get current professional languages IDs for easier checking in the form
-    $current_languages = array_column($languages, 'id');
-    
-    // Get current professional languages proficiency levels
-    $proficiency_levels = [];
-    foreach ($languages as $lang) {
-        $proficiency_levels[$lang['id']] = $lang['proficiency_level'];
-    }
-    
-} catch(Exception $e) {
-    // Log error and show generic message
-    error_log("Database Error: " . $e->getMessage());
-    $error_message = "System is temporarily unavailable. Please try again later.";
 }
 
-// Handle profile update
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile'])) {
+// Handle service offerings update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_services'])) {
     try {
         // Start transaction
         $conn->begin_transaction();
         
-        // Handle file upload if present
-        $profile_image = $professional['prof_image'];
-        if (isset($_FILES['profile_image']) && $_FILES['profile_image']['size'] > 0) {
-            $upload_dir = '../../uploads/profiles/';
-            $file_extension = pathinfo($_FILES['profile_image']['name'], PATHINFO_EXTENSION);
-            $new_filename = 'prof_' . $user_id . '_' . time() . '.' . $file_extension;
+        foreach ($service_types as $type_id => $type) {
+            $is_offered = isset($_POST["offer_service_$type_id"]) ? 1 : 0;
+            $price = isset($_POST["price_$type_id"]) ? $_POST["price_$type_id"] : 0;
             
-            if (move_uploaded_file($_FILES['profile_image']['tmp_name'], $upload_dir . $new_filename)) {
-                $profile_image = $new_filename;
+            // Check if record exists for this professional and service type
+            $check_service_query = "SELECT id FROM professional_services WHERE professional_id = ? AND service_type_id = ?";
+            $stmt = $conn->prepare($check_service_query);
+            $stmt->bind_param("ii", $user_id, $type_id);
+            $stmt->execute();
+            $check_result = $stmt->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                // Update existing record
+                $update_service_query = "UPDATE professional_services SET is_offered = ?, price = ? WHERE professional_id = ? AND service_type_id = ?";
+                $stmt = $conn->prepare($update_service_query);
+                $stmt->bind_param("idii", $is_offered, $price, $user_id, $type_id);
+                $stmt->execute();
             } else {
-                throw new Exception("Failed to upload profile image.");
-            }
-        }
-        
-        // Update professional information
-        $stmt = $conn->prepare("
-            UPDATE professionals SET
-            profile_image = ?,
-            license_number = ?,
-            years_experience = ?,
-            education = ?,
-            bio = ?,
-            phone = ?,
-            website = ?,
-            profile_completed = 1
-            WHERE user_id = ?
-        ");
-        
-        $stmt->bind_param("ssissssi", 
-            $profile_image,
-            $_POST['license_number'],
-            $_POST['years_experience'],
-            $_POST['education'],
-            $_POST['bio'],
-            $_POST['phone'],
-            $_POST['website'],
-            $user_id
-        );
-        
-        $stmt->execute();
-        
-        // Update specializations - first delete existing ones
-        $stmt = $conn->prepare("DELETE FROM professional_specializations WHERE professional_id = ?");
-        $stmt->bind_param("i", $professional['id']);
-        $stmt->execute();
-        
-        // Then insert selected specializations
-        if (isset($_POST['specializations']) && is_array($_POST['specializations'])) {
-            $stmt = $conn->prepare("INSERT INTO professional_specializations (professional_id, specialization_id) VALUES (?, ?)");
-            
-            foreach ($_POST['specializations'] as $spec_id) {
-                $stmt->bind_param("ii", $professional['id'], $spec_id);
+                // Insert new record
+                $insert_service_query = "INSERT INTO professional_services (professional_id, service_type_id, is_offered, price) VALUES (?, ?, ?, ?)";
+                $stmt = $conn->prepare($insert_service_query);
+                $stmt->bind_param("iiid", $user_id, $type_id, $is_offered, $price);
                 $stmt->execute();
             }
         }
         
-        // Update languages - first delete existing ones
-        $stmt = $conn->prepare("DELETE FROM professional_languages WHERE professional_id = ?");
-        $stmt->bind_param("i", $professional['id']);
-        $stmt->execute();
+        $conn->commit();
+        $success_message = "Service offerings updated successfully!";
         
-        // Then insert selected languages with proficiency levels
-        if (isset($_POST['languages']) && is_array($_POST['languages'])) {
-            $stmt = $conn->prepare("INSERT INTO professional_languages (professional_id, language_id, proficiency_level) VALUES (?, ?, ?)");
-            
-            foreach ($_POST['languages'] as $lang_id) {
-                $proficiency = $_POST['proficiency_' . $lang_id] ?? 'intermediate';
-                $stmt->bind_param("iis", $professional['id'], $lang_id, $proficiency);
-                $stmt->execute();
-            }
-        }
-        
-        // Update service offerings
-        
-        // First, get existing professional services to compare
-        $existing_services = [];
-        $stmt = $conn->prepare("SELECT id, service_type_id FROM professional_services WHERE professional_id = ?");
+        // Refresh professional services
+        $stmt = $conn->prepare($prof_services_query);
         $stmt->bind_param("i", $user_id);
         $stmt->execute();
-        $result = $stmt->get_result();
-        while ($row = $result->fetch_assoc()) {
-            $existing_services[$row['service_type_id']] = $row['id'];
+        $prof_services_result = $stmt->get_result();
+        $professional_services = [];
+        while ($service = $prof_services_result->fetch_assoc()) {
+            $professional_services[$service['service_type_id']] = $service;
         }
-        
-        // Process service types
-        if (isset($_POST['service_types']) && is_array($_POST['service_types'])) {
-            foreach ($_POST['service_types'] as $service_type_id) {
-                $service_type_id = intval($service_type_id); // Ensure it's an integer
-                
-                if ($service_type_id <= 0) {
-                    continue; // Skip invalid service type IDs
-                }
-                
-                $custom_price = isset($_POST['service_price_' . $service_type_id]) ? 
-                               floatval($_POST['service_price_' . $service_type_id]) : 0;
-                $service_description = isset($_POST['service_desc_' . $service_type_id]) ? 
-                                     trim($_POST['service_desc_' . $service_type_id]) : '';
-                
-                try {
-                    // Check if service already exists for this professional
-                    if (isset($existing_services[$service_type_id])) {
-                        // Update existing service
-                        $stmt = $conn->prepare("
-                            UPDATE professional_services 
-                            SET custom_price = ?, service_description = ?, is_offered = 1
-                            WHERE id = ?
-                        ");
-                        $stmt->bind_param("dsi", $custom_price, $service_description, $existing_services[$service_type_id]);
-                        $stmt->execute();
-                        
-                        $professional_service_id = $existing_services[$service_type_id];
-                        
-                        // Remove from existing services array to track which ones to set as not offered
-                        unset($existing_services[$service_type_id]);
-                    } else {
-                        // Insert new service
-                        $stmt = $conn->prepare("
-                            INSERT INTO professional_services 
-                            (professional_id, service_type_id, custom_price, service_description, is_offered)
-                            VALUES (?, ?, ?, ?, 1)
-                        ");
-                        $stmt->bind_param("idds", $user_id, $service_type_id, $custom_price, $service_description);
-                        $stmt->execute();
-                        
-                        $professional_service_id = $conn->insert_id;
-                    }
-                    
-                    // Process service modes for this service type
-                    $service_mode_ids = [];
-                    try {
-                        $stmt = $conn->prepare("
-                            SELECT service_mode_id FROM service_type_modes
-                            WHERE service_type_id = ? AND is_included = 1
-                        ");
-                        $stmt->bind_param("i", $service_type_id);
-                        $stmt->execute();
-                        $result = $stmt->get_result();
-                        
-                        while ($row = $result->fetch_assoc()) {
-                            $service_mode_ids[] = $row['service_mode_id'];
-                        }
-                        
-                        // If service_mode_ids is empty, this may be a service that doesn't have modes defined in the service_type_modes table
-                        // Default to all active service modes as a fallback
-                        if (empty($service_mode_ids)) {
-                            // Look up the service type name
-                            $stmt = $conn->prepare("SELECT name FROM service_types WHERE id = ?");
-                            $stmt->bind_param("i", $service_type_id);
-                            $stmt->execute();
-                            $service_type_result = $stmt->get_result();
-                            $service_type_name = '';
-                            
-                            if ($service_type_result->num_rows > 0) {
-                                $service_type_name = $service_type_result->fetch_assoc()['name'];
-                            }
-                            
-                            // Get appropriate modes based on service type
-                            $stmt = $conn->prepare("SELECT id, name FROM service_modes WHERE is_active = 1");
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            $all_modes = [];
-                            
-                            while ($row = $result->fetch_assoc()) {
-                                $all_modes[$row['name']] = $row['id'];
-                            }
-                            
-                            // Apply rules based on service type name
-                            if ($service_type_name === 'DIY') {
-                                // DIY typically uses Document Review mode
-                                if (isset($all_modes['Document Review'])) {
-                                    $service_mode_ids[] = $all_modes['Document Review'];
-                                }
-                            } elseif ($service_type_name === 'Consultation') {
-                                // Consultation typically uses all communication modes
-                                $comm_modes = ['Chat', 'Video Call', 'Phone Call', 'Email'];
-                                foreach ($comm_modes as $mode_name) {
-                                    if (isset($all_modes[$mode_name])) {
-                                        $service_mode_ids[] = $all_modes[$mode_name];
-                                    }
-                                }
-                            } else {
-                                // For any other service type, include all modes
-                                $service_mode_ids = array_values($all_modes);
-                            }
-                        }
-                    } catch (Exception $e) {
-                        error_log("Error getting service modes: " . $e->getMessage() . " (service_type_id: $service_type_id)");
-                        // If we can't get service modes, we can't proceed with this service
-                        continue;
-                    }
-                    
-                    // Now handle each mode's pricing
-                    foreach ($service_mode_ids as $mode_id) {
-                        $mode_key = $service_type_id . '_' . $mode_id;
-                        $is_mode_offered = isset($_POST['service_mode_' . $mode_key]) ? 1 : 0;
-                        $additional_fee = isset($_POST['fee_' . $mode_key]) ? $_POST['fee_' . $mode_key] : 0;
-                        
-                        // Get the professional_service_id (either existing or newly created)
-                        // Ensure $professional_service_id is defined
-                        $professional_service_id = $professional_service_id ?? 0;
-                        $prof_service_id = isset($existing_services[$service_type_id]) ? 
-                                         $existing_services[$service_type_id] : $professional_service_id;
-                        
-                        // Skip if professional service ID is invalid
-                        if ($prof_service_id <= 0) {
-                            continue;
-                        }
-                        
-                        try {
-                            // Check if pricing entry exists
-                            $stmt = $conn->prepare("
-                                SELECT id FROM professional_service_mode_pricing
-                                WHERE professional_service_id = ? AND service_mode_id = ?
-                            ");
-                            $stmt->bind_param("ii", $prof_service_id, $mode_id);
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            
-                            if ($result->num_rows > 0) {
-                                // Update existing pricing entry
-                                $pricing_id = $result->fetch_assoc()['id'];
-                                $stmt = $conn->prepare("
-                                    UPDATE professional_service_mode_pricing
-                                    SET is_offered = ?, additional_fee = ?
-                                    WHERE id = ?
-                                ");
-                                $stmt->bind_param("idi", $is_mode_offered, $additional_fee, $pricing_id);
-                                $stmt->execute();
-                            } else {
-                                // Insert new pricing entry
-                                $stmt = $conn->prepare("
-                                    INSERT INTO professional_service_mode_pricing
-                                    (professional_service_id, service_mode_id, is_offered, additional_fee)
-                                    VALUES (?, ?, ?, ?)
-                                ");
-                                $stmt->bind_param("iiid", $prof_service_id, $mode_id, $is_mode_offered, $additional_fee);
-                                $stmt->execute();
-                            }
-                        } catch (Exception $e) {
-                            error_log("Error processing service mode pricing: " . $e->getMessage() . 
-                                     " (service_type_id: $service_type_id, mode_id: $mode_id, prof_service_id: $prof_service_id)");
-                            // Continue with next mode instead of failing the entire transaction
-                            continue;
-                        }
-                    }
-                } catch (Exception $e) {
-                    error_log("Error processing service: " . $e->getMessage() . 
-                             " (service_type_id: $service_type_id)");
-                    // Continue with next service instead of failing the entire transaction
-                    continue;
-                }
-            }
-        }
-        
-        // Set any remaining existing services as not offered
-        foreach ($existing_services as $service_type_id => $prof_service_id) {
-            $stmt = $conn->prepare("UPDATE professional_services SET is_offered = 0 WHERE id = ?");
-            $stmt->bind_param("i", $prof_service_id);
-            $stmt->execute();
-        }
-        
-        // Commit the transaction
-        $conn->commit();
-        
-        $success_message = "Profile updated successfully!";
-        
-        // Reload professional data
-        header("Location: profile.php");
-        exit();
         
     } catch (Exception $e) {
-        // Rollback transaction on error
         $conn->rollback();
-        error_log("Update Error: " . $e->getMessage());
-        $error_message = "Failed to update profile: " . $e->getMessage();
+        $error_message = "Error updating services: " . $e->getMessage();
     }
 }
 
-// Enable detailed error logging for development
-// Remove in production
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+// Check for service type-mode mappings in the DB and create defaults if none exist
+$check_stm_query = "SELECT COUNT(*) as count FROM service_type_modes";
+$stm_count_result = $conn->query($check_stm_query);
+$stm_count = $stm_count_result->fetch_assoc()['count'];
+
+if ($stm_count == 0) {
+    try {
+        // Start transaction
+        $conn->begin_transaction();
+        
+        // Get active service types
+        $active_types_query = "SELECT id FROM service_types WHERE is_active = 1";
+        $active_types_result = $conn->query($active_types_query);
+        $type_ids = [];
+        while ($type = $active_types_result->fetch_assoc()) {
+            $type_ids[] = $type['id'];
+        }
+        
+        // Get active service modes
+        $active_modes_query = "SELECT id FROM service_modes WHERE is_active = 1";
+        $active_modes_result = $conn->query($active_modes_query);
+        $mode_ids = [];
+        while ($mode = $active_modes_result->fetch_assoc()) {
+            $mode_ids[] = $mode['id'];
+        }
+        
+        // Define default mappings
+        $mappings = [];
+        
+        foreach ($type_ids as $type_id) {
+            foreach ($mode_ids as $mode_id) {
+                // For DIY service type, only include Document Review mode
+                if ($type_id == 1) { // Assuming ID 1 is DIY
+                    if ($mode_id == 5) { // Assuming ID 5 is Document Review
+                        $mappings[] = [$type_id, $mode_id, 1]; // is_included = 1
+                    }
+                } 
+                // For Consultation service type, include all communication modes
+                else if ($type_id == 2) { // Assuming ID 2 is Consultation
+                    if (in_array($mode_id, [1, 2, 3, 4])) { // Assuming IDs 1-4 are communication modes
+                        $mappings[] = [$type_id, $mode_id, 1];
+                    }
+                }
+                // For Complete Process, include all modes
+                else if ($type_id == 3) { // Assuming ID 3 is Complete Process
+                    $mappings[] = [$type_id, $mode_id, 1];
+                }
+                // For any other service type, include all modes
+                else {
+                    $mappings[] = [$type_id, $mode_id, 1];
+                }
+            }
+        }
+        
+        // Insert mappings
+        $insert_mapping_query = "INSERT INTO service_type_modes (service_type_id, service_mode_id, is_included) VALUES (?, ?, ?)";
+        $stmt = $conn->prepare($insert_mapping_query);
+        
+        foreach ($mappings as $mapping) {
+            $stmt->bind_param("iii", $mapping[0], $mapping[1], $mapping[2]);
+            $stmt->execute();
+        }
+        
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        // Don't show error to user, just log it
+        error_log("Error creating service type-mode mappings: " . $e->getMessage());
+    }
+}
+
+// Get service modes for each service type
+$service_modes_by_type = [];
+
+foreach ($service_types as $type_id => $type) {
+    $modes_query = "SELECT sm.id, sm.name 
+                  FROM service_modes sm
+                  INNER JOIN service_type_modes stm ON sm.id = stm.service_mode_id
+                  WHERE stm.service_type_id = ? 
+                  AND stm.is_included = 1
+                  AND sm.is_active = 1";
+    $stmt = $conn->prepare($modes_query);
+    $stmt->bind_param("i", $type_id);
+    $stmt->execute();
+    $modes_result = $stmt->get_result();
+    
+    $service_modes_by_type[$type_id] = [];
+    
+    if ($modes_result->num_rows > 0) {
+        while ($mode = $modes_result->fetch_assoc()) {
+            $service_modes_by_type[$type_id][] = $mode;
+        }
+    } else {
+        // Fallback logic if no modes are found for a service type
+        // Get all active service modes
+        $all_modes_query = "SELECT id, name FROM service_modes WHERE is_active = 1";
+        $all_modes_result = $conn->query($all_modes_query);
+        $all_modes = [];
+        while ($mode = $all_modes_result->fetch_assoc()) {
+            $all_modes[$mode['id']] = $mode;
+        }
+        
+        // For DIY service, only show Document Review mode
+        if ($type_id == 1) { // Assuming ID 1 is DIY
+            foreach ($all_modes as $mode_id => $mode) {
+                if ($mode_id == 5) { // Assuming ID 5 is Document Review
+                    $service_modes_by_type[$type_id][] = $mode;
+                }
+            }
+        }
+        // For Consultation service, show all communication modes
+        else if ($type_id == 2) { // Assuming ID 2 is Consultation
+            foreach ($all_modes as $mode_id => $mode) {
+                if (in_array($mode_id, [1, 2, 3, 4])) { // Assuming IDs 1-4 are communication modes
+                    $service_modes_by_type[$type_id][] = $mode;
+                }
+            }
+        }
+        // For Complete Process, show all modes
+        else if ($type_id == 3) { // Assuming ID 3 is Complete Process
+            foreach ($all_modes as $mode) {
+                $service_modes_by_type[$type_id][] = $mode;
+            }
+        }
+        // For any other service type, show all modes
+        else {
+            foreach ($all_modes as $mode) {
+                $service_modes_by_type[$type_id][] = $mode;
+            }
+        }
+        
+        // If still no modes, display a message
+        if (empty($service_modes_by_type[$type_id])) {
+            // This will be handled in the UI to show "No service modes available"
+        }
+    }
+}
+
+// CSS for the profile page
+$page_specific_css = '
+/* Profile specific styles */
+.profile-image-container {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    margin-bottom: 20px;
+}
+
+.profile-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 3px solid #4a6fdc;
+}
+
+.profile-image-upload {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    background-color: #4a6fdc;
+    color: white;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.profile-image-upload input {
+    position: absolute;
+    font-size: 100px;
+    opacity: 0;
+    right: 0;
+    top: 0;
+    cursor: pointer;
+}
+
+.profile-tabs {
+    display: flex;
+    border-bottom: 1px solid #ddd;
+    margin-bottom: 20px;
+}
+
+.profile-tab {
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-right: 10px;
+}
+
+.profile-tab.active {
+    border-bottom-color: #4a6fdc;
+    color: #4a6fdc;
+    font-weight: 500;
+}
+
+.profile-tab-content {
+    display: none;
+}
+
+.profile-tab-content.active {
+    display: block;
+}
+
+.services-container {
+    margin-top: 20px;
+}
+
+.service-item {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.service-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.service-modes {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+}
+
+.service-modes-title {
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.service-mode-tag {
+    display: inline-block;
+    background-color: #e8f4ff;
+    color: #4a6fdc;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-right: 5px;
+    margin-bottom: 5px;
+    font-size: 0.85rem;
+}
+
+.tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 10px;
+}
+
+.tag {
+    background-color: #e8f4ff;
+    color: #4a6fdc;
+    padding: 5px 10px;
+    border-radius: 15px;
+    font-size: 0.9rem;
+}
+
+.toggle-checkbox {
+    --toggle-width: 50px;
+    --toggle-height: 25px;
+    display: inline-block;
+    vertical-align: middle;
+    position: relative;
+    width: var(--toggle-width);
+    height: var(--toggle-height);
+    margin-right: 10px;
+}
+
+.toggle-checkbox input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: var(--toggle-height);
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: calc(var(--toggle-height) - 8px);
+    width: calc(var(--toggle-height) - 8px);
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: #4a6fdc;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(calc(var(--toggle-width) - var(--toggle-height)));
+}
+
+.price-input {
+    width: 100px;
+    margin-left: 10px;
+}
+
+.multiselect {
+    height: 120px !important;
+}
+
+.profile-card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    overflow: hidden;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.profile-card-title {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+';
+
+// JavaScript for the profile page
+$page_js = '
+// Initialize profile tabs
+function showTab(tabId) {
+    // Hide all tab contents
+    document.querySelectorAll(".profile-tab-content").forEach(function(content) {
+        content.classList.remove("active");
+    });
+    
+    // Deactivate all tabs
+    document.querySelectorAll(".profile-tab").forEach(function(tab) {
+        tab.classList.remove("active");
+    });
+    
+    // Show the selected tab content
+    document.getElementById(tabId).classList.add("active");
+    
+    // Activate the clicked tab
+    document.querySelector("[data-tab=\'" + tabId + "\']").classList.add("active");
+}
+
+// Set up tab event listeners
+document.querySelectorAll(".profile-tab").forEach(function(tab) {
+    tab.addEventListener("click", function() {
+        showTab(this.getAttribute("data-tab"));
+    });
+});
+
+// Show the first tab by default
+showTab("basic-info");
+';
+
+// Include header
+include_once('includes/header.php');
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Profile - Professional Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-    <style>
-        /* Service Tab Styles */
-        .service-type-section {
-            margin-bottom: 30px;
-            border: 1px solid #e1e1e1;
-            border-radius: 5px;
-        }
-        
-        .service-type-header {
-            padding: 15px;
-            background-color: #f9f9f9;
-            border-bottom: 1px solid #e1e1e1;
-            cursor: pointer;
-        }
-        
-        .service-type-checkbox {
-            display: flex;
-            align-items: center;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        
-        .service-type-name {
-            margin-left: 10px;
-            font-size: 16px;
-        }
-        
-        .service-type-description {
-            margin-left: 25px;
-            color: #666;
-            font-size: 14px;
-        }
-        
-        .service-type-details {
-            padding: 15px;
-            background-color: #fff;
-        }
-        
-        .service-modes {
-            margin-top: 15px;
-        }
-        
-        .service-modes h4 {
-            margin-bottom: 10px;
-            font-size: 15px;
-            color: #444;
-        }
-        
-        .service-modes-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 15px;
-        }
-        
-        .service-mode-item {
-            padding: 12px;
-            background-color: #f9f9f9;
-            border-radius: 4px;
-            border: 1px solid #e1e1e1;
-        }
-        
-        .service-mode-checkbox {
-            display: flex;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        
-        .service-mode-name {
-            margin-left: 8px;
-            font-size: 14px;
-        }
-        
-        .service-mode-fee {
-            margin-top: 8px;
-        }
-        
-        .service-mode-fee label {
-            display: block;
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        
-        .service-mode-fee input {
-            width: 100%;
-            padding: 6px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-        }
-        
-        .form-info {
-            color: #666;
-            margin-bottom: 15px;
-            font-size: 14px;
-            font-style: italic;
-        }
-    </style>
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <?php if (!empty($professional['prof_image'])): ?>
-                    <img src="../../uploads/profiles/<?php echo htmlspecialchars($professional['prof_image']); ?>" 
-                         alt="Profile" class="profile-image">
-                <?php else: ?>
-                    <img src="../../assets/images/professional-avatar.png" alt="Profile" class="profile-image">
-                <?php endif; ?>
-                <h3><?php echo htmlspecialchars($professional['name']); ?></h3>
-                <p>Visa Professional</p>
-                <?php if ($professional['verification_status'] === 'verified'): ?>
-                    <span class="verification-badge">Verified</span>
-                <?php endif; ?>
-            </div>
-            
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link">Dashboard</a></li>
-                <li class="nav-item"><a href="cases.php" class="nav-link">Cases</a></li>
-                <li class="nav-item"><a href="clients.php" class="nav-link">Clients</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="calendar.php" class="nav-link">Calendar</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link active">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
-        </div>
-        
-        <div class="main-content">
-            <div class="header">
-                <h1>My Profile</h1>
-            </div>
-            
-            <?php if ($success_message): ?>
-                <div class="alert success"><?php echo $success_message; ?></div>
-            <?php endif; ?>
-            
-            <?php if ($error_message): ?>
-                <div class="alert error"><?php echo $error_message; ?></div>
-            <?php endif; ?>
-            
-            <?php if ($professional): ?>
-                <div class="profile-container">
-                    <div class="profile-sidebar">
-                        <div class="card">
-                            <div class="profile-image-container">
-                                <?php if (!empty($professional['prof_image'])): ?>
-                                    <img src="../../uploads/profiles/<?php echo htmlspecialchars($professional['prof_image']); ?>" 
-                                         alt="<?php echo htmlspecialchars($professional['name']); ?>" 
-                                         class="profile-large">
-                                <?php else: ?>
-                                    <div class="profile-placeholder">
-                                        <?php echo strtoupper(substr($professional['name'], 0, 1)); ?>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                            
-                            <div class="profile-info">
-                                <h2><?php echo htmlspecialchars($professional['name']); ?></h2>
-                                <p class="profile-email"><?php echo htmlspecialchars($professional['email']); ?></p>
-                                
-                                <div class="profile-contact">
-                                    <p><i class="icon-phone"></i> <?php echo htmlspecialchars($professional['phone'] ?? 'Not set'); ?></p>
-                                    <?php if (!empty($professional['website'])): ?>
-                                        <p><i class="icon-globe"></i> <a href="http://<?php echo htmlspecialchars($professional['website']); ?>" target="_blank"><?php echo htmlspecialchars($professional['website']); ?></a></p>
-                                    <?php endif; ?>
-                                </div>
-                                
-                                <hr>
-                                
-                                <div class="profile-status">
-                                    <h3>Account Status</h3>
-                                    <div class="status-item">
-                                        <span class="status-label">Verification:</span>
-                                        <span class="badge <?php echo htmlspecialchars($professional['verification_status']); ?>">
-                                            <?php echo ucfirst(htmlspecialchars($professional['verification_status'])); ?>
-                                        </span>
-                                    </div>
-                                    
-                                    <div class="status-item">
-                                        <span class="status-label">Profile:</span>
-                                        <span class="badge <?php echo $professional['profile_completed'] ? 'active' : 'draft'; ?>">
-                                            <?php echo $professional['profile_completed'] ? 'Complete' : 'Incomplete'; ?>
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="profile-content">
-                        <div class="card">
-                            <div class="profile-tabs">
-                                <button class="tab-button active" data-tab="basic-info">Basic Info</button>
-                                <button class="tab-button" data-tab="specializations">Specializations</button>
-                                <button class="tab-button" data-tab="languages">Languages</button>
-                                <button class="tab-button" data-tab="services">Services</button>
-                            </div>
-                            
-                            <div class="tab-content">
-                                <form method="POST" action="profile.php" enctype="multipart/form-data">
-                                    <!-- Basic Info Tab -->
-                                    <div class="tab-pane active" id="basic-info">
-                                        <div class="form-group">
-                                            <label for="profile_image">Profile Picture</label>
-                                            <input type="file" id="profile_image" name="profile_image" class="form-control">
-                                        </div>
-                                        
-                                        <div class="form-row">
-                                            <div class="form-group half">
-                                                <label for="license_number">License Number</label>
-                                                <input type="text" id="license_number" name="license_number" class="form-control" value="<?php echo htmlspecialchars($professional['license_number'] ?? ''); ?>" required>
-                                            </div>
-                                            
-                                            <div class="form-group half">
-                                                <label for="years_experience">Years of Experience</label>
-                                                <input type="number" id="years_experience" name="years_experience" class="form-control" value="<?php echo htmlspecialchars($professional['years_experience'] ?? 0); ?>" min="0" required>
-                                            </div>
-                                        </div>
-                                        
-                                        <div class="form-group">
-                                            <label for="education">Education</label>
-                                            <textarea id="education" name="education" class="form-control" rows="3" required><?php echo htmlspecialchars($professional['education'] ?? ''); ?></textarea>
-                                        </div>
-                                        
-                                        <div class="form-group">
-                                            <label for="bio">Professional Bio</label>
-                                            <textarea id="bio" name="bio" class="form-control" rows="5" required><?php echo htmlspecialchars($professional['bio'] ?? ''); ?></textarea>
-                                        </div>
-                                        
-                                        <div class="form-row">
-                                            <div class="form-group half">
-                                                <label for="phone">Phone Number</label>
-                                                <input type="tel" id="phone" name="phone" class="form-control" value="<?php echo htmlspecialchars($professional['phone'] ?? ''); ?>" required>
-                                            </div>
-                                            
-                                            <div class="form-group half">
-                                                <label for="website">Website (Optional)</label>
-                                                <input type="text" id="website" name="website" class="form-control" value="<?php echo htmlspecialchars($professional['website'] ?? ''); ?>" placeholder="www.example.com">
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Specializations Tab -->
-                                    <div class="tab-pane" id="specializations">
-                                        <div class="form-group">
-                                            <label>Your Specializations</label>
-                                            <div class="checkbox-grid">
-                                                <?php foreach ($all_specializations as $spec): ?>
-                                                    <div class="checkbox-item">
-                                                        <label>
-                                                            <input type="checkbox" 
-                                                                   name="specializations[]" 
-                                                                   value="<?php echo htmlspecialchars($spec['id']); ?>" 
-                                                                   <?php echo in_array($spec['id'], $current_specializations) ? 'checked' : ''; ?>>
-                                                            <?php echo htmlspecialchars($spec['name']); ?>
-                                                        </label>
-                                                    </div>
-                                                <?php endforeach; ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Languages Tab -->
-                                    <div class="tab-pane" id="languages">
-                                        <div class="form-group">
-                                            <label>Languages You Speak</label>
-                                            <?php foreach ($all_languages as $lang): ?>
-                                                <div class="language-item">
-                                                    <div class="language-checkbox">
-                                                        <label>
-                                                            <input type="checkbox" 
-                                                                   name="languages[]" 
-                                                                   value="<?php echo htmlspecialchars($lang['id']); ?>" 
-                                                                   data-lang-id="<?php echo htmlspecialchars($lang['id']); ?>"
-                                                                   <?php echo in_array($lang['id'], $current_languages) ? 'checked' : ''; ?>>
-                                                            <?php echo htmlspecialchars($lang['name']); ?>
-                                                        </label>
-                                                    </div>
-                                                    
-                                                    <div class="language-proficiency">
-                                                        <select name="proficiency_<?php echo htmlspecialchars($lang['id']); ?>" 
-                                                                class="form-control proficiency-select" 
-                                                                data-for-lang="<?php echo htmlspecialchars($lang['id']); ?>"
-                                                                <?php echo !in_array($lang['id'], $current_languages) ? 'disabled' : ''; ?>>
-                                                            <option value="basic" <?php echo isset($proficiency_levels[$lang['id']]) && $proficiency_levels[$lang['id']] == 'basic' ? 'selected' : ''; ?>>Basic</option>
-                                                            <option value="intermediate" <?php echo isset($proficiency_levels[$lang['id']]) && $proficiency_levels[$lang['id']] == 'intermediate' ? 'selected' : ''; ?>>Intermediate</option>
-                                                            <option value="fluent" <?php echo isset($proficiency_levels[$lang['id']]) && $proficiency_levels[$lang['id']] == 'fluent' ? 'selected' : ''; ?>>Fluent</option>
-                                                            <option value="native" <?php echo isset($proficiency_levels[$lang['id']]) && $proficiency_levels[$lang['id']] == 'native' ? 'selected' : ''; ?>>Native</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Services Tab -->
-                                    <div class="tab-pane" id="services">
-                                        <div class="form-group">
-                                            <label>Services You Offer</label>
-                                            <p class="form-info">Select the services you offer and set your pricing for each service type and mode.</p>
-                                            
-                                            <?php
-                                            // Fetch service types
-                                            $service_types = [];
-                                            try {
-                                                $stmt = $conn->prepare("SELECT id, name, description FROM service_types WHERE is_active = 1");
-                                                $stmt->execute();
-                                                $result = $stmt->get_result();
-                                                while ($row = $result->fetch_assoc()) {
-                                                    $service_types[] = $row;
-                                                }
-                                                
-                                                // Fetch professional's current services
-                                                $professional_services = [];
-                                                $stmt = $conn->prepare("
-                                                    SELECT ps.*, st.name as service_name 
-                                                    FROM professional_services ps
-                                                    JOIN service_types st ON ps.service_type_id = st.id
-                                                    WHERE ps.professional_id = ?
-                                                ");
-                                                $stmt->bind_param("i", $user_id);
-                                                $stmt->execute();
-                                                $result = $stmt->get_result();
-                                                while ($row = $result->fetch_assoc()) {
-                                                    $professional_services[$row['service_type_id']] = $row;
-                                                }
-                                                
-                                                // Fetch service modes
-                                                $service_modes = [];
-                                                $stmt = $conn->prepare("SELECT id, name, description FROM service_modes WHERE is_active = 1");
-                                                $stmt->execute();
-                                                $result = $stmt->get_result();
-                                                while ($row = $result->fetch_assoc()) {
-                                                    $service_modes[] = $row;
-                                                }
-                                                
-                                                // Fetch service_type_modes - which modes are available for each service type
-                                                $service_type_modes = [];
-                                                $stmt = $conn->prepare("
-                                                    SELECT * FROM service_type_modes 
-                                                    WHERE is_included = 1
-                                                ");
-                                                $stmt->execute();
-                                                $result = $stmt->get_result();
-                                                while ($row = $result->fetch_assoc()) {
-                                                    $service_type_modes[$row['service_type_id']][] = $row['service_mode_id'];
-                                                }
-                                                
-                                                // Fetch professional service mode pricing
-                                                $mode_pricing = [];
-                                                $stmt = $conn->prepare("
-                                                    SELECT psmp.*, ps.service_type_id
-                                                    FROM professional_service_mode_pricing psmp
-                                                    JOIN professional_services ps ON psmp.professional_service_id = ps.id
-                                                    WHERE ps.professional_id = ?
-                                                ");
-                                                $stmt->bind_param("i", $user_id);
-                                                $stmt->execute();
-                                                $result = $stmt->get_result();
-                                                while ($row = $result->fetch_assoc()) {
-                                                    $key = $row['service_type_id'] . '_' . $row['service_mode_id'];
-                                                    $mode_pricing[$key] = $row;
-                                                }
-                                            } catch (Exception $e) {
-                                                echo '<div class="alert error">Error loading service data: ' . htmlspecialchars($e->getMessage()) . '</div>';
-                                            }
-                                            
-                                            // Display each service type with modes
-                                            foreach ($service_types as $service_type):
-                                                $is_offered = isset($professional_services[$service_type['id']]);
-                                                $base_price = $is_offered ? $professional_services[$service_type['id']]['custom_price'] : 0;
-                                                $service_description = $is_offered ? $professional_services[$service_type['id']]['service_description'] : '';
-                                            ?>
-                                                <div class="service-type-section">
-                                                    <div class="service-type-header">
-                                                        <label class="service-type-checkbox">
-                                                            <input type="checkbox" 
-                                                                   name="service_types[]" 
-                                                                   value="<?php echo htmlspecialchars($service_type['id']); ?>"
-                                                                   data-service-id="<?php echo htmlspecialchars($service_type['id']); ?>"
-                                                                   <?php echo $is_offered ? 'checked' : ''; ?>>
-                                                            <span class="service-type-name"><?php echo htmlspecialchars($service_type['name']); ?></span>
-                                                        </label>
-                                                        <div class="service-type-description"><?php echo htmlspecialchars($service_type['description']); ?></div>
-                                                    </div>
-                                                    
-                                                    <div class="service-type-details" id="service-details-<?php echo htmlspecialchars($service_type['id']); ?>" 
-                                                         style="<?php echo $is_offered ? '' : 'display: none;'; ?>">
-                                                        
-                                                        <div class="form-group">
-                                                            <label for="service_price_<?php echo htmlspecialchars($service_type['id']); ?>">Base Price ($)</label>
-                                                            <input type="number" 
-                                                                   id="service_price_<?php echo htmlspecialchars($service_type['id']); ?>" 
-                                                                   name="service_price_<?php echo htmlspecialchars($service_type['id']); ?>" 
-                                                                   class="form-control" 
-                                                                   min="0" 
-                                                                   step="0.01" 
-                                                                   value="<?php echo htmlspecialchars($base_price); ?>">
-                                                        </div>
-                                                        
-                                                        <div class="form-group">
-                                                            <label for="service_desc_<?php echo htmlspecialchars($service_type['id']); ?>">Service Description</label>
-                                                            <textarea id="service_desc_<?php echo htmlspecialchars($service_type['id']); ?>" 
-                                                                      name="service_desc_<?php echo htmlspecialchars($service_type['id']); ?>" 
-                                                                      class="form-control" 
-                                                                      rows="2"><?php echo htmlspecialchars($service_description); ?></textarea>
-                                                        </div>
-                                                        
-                                                        <div class="service-modes">
-                                                            <h4>Service Modes</h4>
-                                                            <div class="service-modes-grid">
-                                                                <?php 
-                                                                // Only show modes available for this service type
-                                                                $available_modes = $service_type_modes[$service_type['id']] ?? [];
-                                                                
-                                                                // If no modes are defined in the database for this service type,
-                                                                // show all available modes as a fallback
-                                                                if (empty($available_modes)) {
-                                                                    // Check if this is a DIY service (usually id=1)
-                                                                    if ($service_type['name'] === 'DIY') {
-                                                                        // DIY typically uses Document Review mode
-                                                                        foreach ($service_modes as $mode) {
-                                                                            if ($mode['name'] === 'Document Review') {
-                                                                                $available_modes[] = $mode['id'];
-                                                                            }
-                                                                        }
-                                                                    } elseif ($service_type['name'] === 'Consultation') {
-                                                                        // Consultation typically uses all communication modes
-                                                                        foreach ($service_modes as $mode) {
-                                                                            if (in_array($mode['name'], ['Chat', 'Video Call', 'Phone Call', 'Email'])) {
-                                                                                $available_modes[] = $mode['id'];
-                                                                            }
-                                                                        }
-                                                                    } elseif ($service_type['name'] === 'Complete Process') {
-                                                                        // Complete Process typically uses all modes
-                                                                        foreach ($service_modes as $mode) {
-                                                                            $available_modes[] = $mode['id'];
-                                                                        }
-                                                                    } else {
-                                                                        // For any other service type, show all modes
-                                                                        foreach ($service_modes as $mode) {
-                                                                            $available_modes[] = $mode['id'];
-                                                                        }
-                                                                    }
-                                                                }
-                                                                
-                                                                // If still no modes available, show a message
-                                                                if (empty($available_modes)) {
-                                                                    echo '<p>No service modes available for this service type.</p>';
-                                                                } else {
-                                                                    foreach ($service_modes as $mode):
-                                                                        if (!in_array($mode['id'], $available_modes)) continue;
-                                                                        
-                                                                        $mode_key = $service_type['id'] . '_' . $mode['id'];
-                                                                        $mode_is_offered = isset($mode_pricing[$mode_key]) ? $mode_pricing[$mode_key]['is_offered'] : 1;
-                                                                        $additional_fee = isset($mode_pricing[$mode_key]) ? $mode_pricing[$mode_key]['additional_fee'] : 0;
-                                                                ?>
-                                                                        <div class="service-mode-item">
-                                                                            <label class="service-mode-checkbox">
-                                                                                <input type="checkbox" 
-                                                                                       name="service_mode_<?php echo htmlspecialchars($mode_key); ?>" 
-                                                                                       <?php echo $mode_is_offered ? 'checked' : ''; ?>>
-                                                                                <span class="service-mode-name"><?php echo htmlspecialchars($mode['name']); ?></span>
-                                                                            </label>
-                                                                            
-                                                                            <div class="service-mode-fee">
-                                                                                <label for="fee_<?php echo htmlspecialchars($mode_key); ?>">Additional Fee ($)</label>
-                                                                                <input type="number" 
-                                                                                       id="fee_<?php echo htmlspecialchars($mode_key); ?>" 
-                                                                                       name="fee_<?php echo htmlspecialchars($mode_key); ?>" 
-                                                                                       class="form-control" 
-                                                                                       min="0" 
-                                                                                       step="0.01" 
-                                                                                       value="<?php echo htmlspecialchars($additional_fee); ?>">
-                                                                            </div>
-                                                                        </div>
-                                                                <?php 
-                                                                    endforeach;
-                                                                }
-                                                                ?>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="form-actions">
-                                        <button type="submit" name="update_profile" class="button">Save Changes</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
-    
-    <script>
-        // Tab switching functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            const tabButtons = document.querySelectorAll('.tab-button');
-            const tabPanes = document.querySelectorAll('.tab-pane');
-            
-            tabButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    // Remove active class from all buttons and panes
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    tabPanes.forEach(pane => pane.classList.remove('active'));
-                    
-                    // Add active class to clicked button and corresponding pane
-                    button.classList.add('active');
-                    const tabId = button.getAttribute('data-tab');
-                    document.getElementById(tabId).classList.add('active');
-                });
-            });
-            
-            // Language checkbox functionality
-            const languageCheckboxes = document.querySelectorAll('input[name="languages[]"]');
-            languageCheckboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', function() {
-                    const langId = this.getAttribute('data-lang-id');
-                    const proficiencySelect = document.querySelector(`select[data-for-lang="${langId}"]`);
-                    
-                    if (proficiencySelect) {
-                        proficiencySelect.disabled = !this.checked;
+<h1 class="page-title"><?php echo $page_header; ?></h1>
+
+<?php if ($success_message): ?>
+<div class="alert alert-success">
+    <?php echo $success_message; ?>
+</div>
+<?php endif; ?>
+
+<?php if ($error_message): ?>
+<div class="alert alert-danger">
+    <?php echo $error_message; ?>
+</div>
+<?php endif; ?>
+
+<div class="profile-tabs">
+    <div class="profile-tab active" data-tab="basic-info">Basic Information</div>
+    <div class="profile-tab" data-tab="specializations">Specializations & Languages</div>
+    <div class="profile-tab" data-tab="services">Services</div>
+</div>
+
+<div class="profile-tab-content active" id="basic-info">
+    <div class="profile-card">
+        <h2 class="profile-card-title">Personal Information</h2>
+        <form method="POST" action="" enctype="multipart/form-data">
+            <div class="profile-image-container">
+                <?php
+                // Determine profile image path
+                $display_img = '../../assets/images/default-profile.png';
+                if (!empty($user['profile_image'])) {
+                    if (file_exists('../../uploads/profiles/' . $user['profile_image'])) {
+                        $display_img = '../../uploads/profiles/' . $user['profile_image'];
+                    } else if (file_exists('../uploads/profiles/' . $user['profile_image'])) {
+                        $display_img = '../uploads/profiles/' . $user['profile_image'];
                     }
-                });
-            });
-            
-            // Service type checkbox functionality
-            const serviceTypeCheckboxes = document.querySelectorAll('input[name="service_types[]"]');
-            serviceTypeCheckboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', function() {
-                    const serviceId = this.getAttribute('data-service-id');
-                    const detailsDiv = document.getElementById(`service-details-${serviceId}`);
-                    
-                    if (detailsDiv) {
-                        if (this.checked) {
-                            detailsDiv.style.display = 'block';
-                        } else {
-                            detailsDiv.style.display = 'none';
-                        }
+                } else if (!empty($user['profile_picture'])) {
+                    if (file_exists('../../uploads/profiles/' . $user['profile_picture'])) {
+                        $display_img = '../../uploads/profiles/' . $user['profile_picture'];
                     }
-                });
-                
-                // Also add click handler to the header for toggling
-                const header = checkbox.closest('.service-type-header');
-                if (header) {
-                    header.addEventListener('click', function(e) {
-                        // Don't toggle if clicking the checkbox itself
-                        if (e.target.type !== 'checkbox') {
-                            const serviceId = checkbox.getAttribute('data-service-id');
-                            const detailsDiv = document.getElementById(`service-details-${serviceId}`);
-                            
-                            if (detailsDiv) {
-                                if (detailsDiv.style.display === 'none') {
-                                    detailsDiv.style.display = 'block';
-                                    checkbox.checked = true;
-                                } else {
-                                    detailsDiv.style.display = 'none';
-                                    checkbox.checked = false;
-                                }
-                            }
-                        }
-                    });
                 }
-            });
-        });
-    </script>
-</body>
-</html>
+                ?>
+                <img src="<?php echo $display_img; ?>" alt="Profile Image" class="profile-image">
+                <div class="profile-image-upload">
+                    <i class="fas fa-camera"></i>
+                    <input type="file" name="profile_image" accept="image/*">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="name">Full Name</label>
+                <input type="text" id="name" name="name" class="form-control" value="<?php echo htmlspecialchars($user['name']); ?>" required>
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" class="form-control" value="<?php echo htmlspecialchars($user['email']); ?>" required>
+            </div>
+            <div class="form-group">
+                <label for="phone">Phone</label>
+                <input type="tel" id="phone" name="phone" class="form-control" value="<?php echo htmlspecialchars($user['phone']); ?>">
+            </div>
+            <div class="form-group">
+                <label for="bio">Professional Bio</label>
+                <textarea id="bio" name="bio" class="form-control" rows="4"><?php echo htmlspecialchars($user['bio']); ?></textarea>
+            </div>
+            <div class="form-group">
+                <label for="years_experience">Years of Experience</label>
+                <input type="number" id="years_experience" name="years_experience" class="form-control" value="<?php echo (int)$user['years_experience']; ?>" min="0">
+            </div>
+            <div class="form-group">
+                <label for="license_number">License Number</label>
+                <input type="text" id="license_number" name="license_number" class="form-control" value="<?php echo htmlspecialchars($user['license_number']); ?>">
+            </div>
+            <div class="form-group">
+                <label for="location">Location</label>
+                <input type="text" id="location" name="location" class="form-control" value="<?php echo htmlspecialchars($user['location']); ?>">
+            </div>
+            <div class="form-group">
+                <label for="consultation_fee">Base Consultation Fee ($)</label>
+                <input type="number" id="consultation_fee" name="consultation_fee" class="form-control" value="<?php echo (float)$user['consultation_fee']; ?>" min="0" step="0.01">
+            </div>
+            <div class="form-actions">
+                <button type="submit" name="update_profile" class="button">Update Profile</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="profile-tab-content" id="specializations">
+    <div class="profile-card">
+        <h2 class="profile-card-title">Specializations & Languages</h2>
+        <form method="POST" action="">
+            <div class="form-group">
+                <label for="specializations">Specializations</label>
+                <select id="specializations" name="specializations[]" class="form-control multiselect" multiple>
+                    <?php foreach ($all_specializations as $id => $name): ?>
+                        <option value="<?php echo $id; ?>" <?php echo isset($current_specializations[$id]) ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($name); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <small>Hold Ctrl (or Cmd) to select multiple</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="languages">Languages</label>
+                <select id="languages" name="languages[]" class="form-control multiselect" multiple>
+                    <?php foreach ($all_languages as $id => $name): ?>
+                        <option value="<?php echo $id; ?>" <?php echo isset($current_languages[$id]) ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($name); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <small>Hold Ctrl (or Cmd) to select multiple</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" name="update_profile" class="button">Update Specializations & Languages</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="profile-tab-content" id="services">
+    <div class="profile-card">
+        <h2 class="profile-card-title">Service Offerings</h2>
+        <form method="POST" action="">
+            <div class="services-container">
+                <?php foreach ($service_types as $type_id => $type): ?>
+                    <div class="service-item">
+                        <div class="service-item-header">
+                            <div>
+                                <label class="toggle-checkbox">
+                                    <input type="checkbox" name="offer_service_<?php echo $type_id; ?>" 
+                                        <?php echo isset($professional_services[$type_id]) && $professional_services[$type_id]['is_offered'] ? 'checked' : ''; ?>>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <strong><?php echo htmlspecialchars($type['name']); ?></strong>
+                            </div>
+                            <div>
+                                <label>Price ($): 
+                                    <input type="number" name="price_<?php echo $type_id; ?>" class="form-control price-input" 
+                                        value="<?php echo isset($professional_services[$type_id]) ? (float)$professional_services[$type_id]['price'] : 0; ?>" 
+                                        min="0" step="0.01">
+                                </label>
+                            </div>
+                        </div>
+                        <p><?php echo htmlspecialchars($type['description']); ?></p>
+                        <div class="service-modes">
+                            <div class="service-modes-title">Available Service Modes:</div>
+                            <?php if (isset($service_modes_by_type[$type_id]) && !empty($service_modes_by_type[$type_id])): ?>
+                                <?php foreach ($service_modes_by_type[$type_id] as $mode): ?>
+                                    <span class="service-mode-tag"><?php echo htmlspecialchars($mode['name']); ?></span>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <p>No service modes available for this service type.</p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <div class="form-actions">
+                <button type="submit" name="update_services" class="button">Update Service Offerings</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<?php
+// Include footer
+include_once('includes/footer.php');
+?>
