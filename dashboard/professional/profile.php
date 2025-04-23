@@ -36,6 +36,16 @@ if ($result->num_rows === 0) {
 
 $user = $result->fetch_assoc();
 
+// Initialize default values for undefined fields
+$user['name'] = $user['name'] ?? '';
+$user['email'] = $user['email'] ?? '';
+$user['phone'] = $user['phone'] ?? '';
+$user['bio'] = $user['bio'] ?? '';
+$user['years_experience'] = $user['years_experience'] ?? 0;
+$user['license_number'] = $user['license_number'] ?? '';
+$user['location'] = $user['location'] ?? '';
+$user['consultation_fee'] = $user['consultation_fee'] ?? 0;
+
 // Get current specializations
 $spec_query = "SELECT s.id, s.name FROM specializations s
               INNER JOIN professional_specializations ps ON s.id = ps.specialization_id
@@ -747,15 +757,15 @@ include_once('includes/header.php');
             </div>
             <div class="form-group">
                 <label for="license_number">License Number</label>
-                <input type="text" id="license_number" name="license_number" class="form-control" value="<?php echo htmlspecialchars($user['license_number']); ?>">
+                <input type="text" id="license_number" name="license_number" class="form-control" value="<?php echo htmlspecialchars($user['license_number'] ?? ''); ?>">
             </div>
             <div class="form-group">
                 <label for="location">Location</label>
-                <input type="text" id="location" name="location" class="form-control" value="<?php echo htmlspecialchars($user['location']); ?>">
+                <input type="text" id="location" name="location" class="form-control" value="<?php echo htmlspecialchars($user['location'] ?? ''); ?>">
             </div>
             <div class="form-group">
                 <label for="consultation_fee">Base Consultation Fee ($)</label>
-                <input type="number" id="consultation_fee" name="consultation_fee" class="form-control" value="<?php echo (float)$user['consultation_fee']; ?>" min="0" step="0.01">
+                <input type="number" id="consultation_fee" name="consultation_fee" class="form-control" value="<?php echo number_format((float)($user['consultation_fee'] ?? 0), 2); ?>" min="0" step="0.01">
             </div>
             <div class="form-actions">
                 <button type="submit" name="update_profile" class="button">Update Profile</button>
@@ -807,28 +817,28 @@ include_once('includes/header.php');
                 <?php foreach ($service_types as $type_id => $type): ?>
                     <div class="service-item">
                         <div class="service-item-header">
-                            <div>
+                            <div class="service-item-title">
                                 <label class="toggle-checkbox">
                                     <input type="checkbox" name="offer_service_<?php echo $type_id; ?>" 
-                                        <?php echo isset($professional_services[$type_id]) && $professional_services[$type_id]['is_offered'] ? 'checked' : ''; ?>>
+                                        <?php echo isset($professional_services[$type_id]['is_offered']) && $professional_services[$type_id]['is_offered'] ? 'checked' : ''; ?>>
                                     <span class="toggle-slider"></span>
                                 </label>
-                                <strong><?php echo htmlspecialchars($type['name']); ?></strong>
+                                <strong><?php echo htmlspecialchars($type['name'] ?? ''); ?></strong>
                             </div>
-                            <div>
+                            <div class="service-price">
                                 <label>Price ($): 
-                                    <input type="number" name="price_<?php echo $type_id; ?>" class="form-control price-input" 
-                                        value="<?php echo isset($professional_services[$type_id]) ? (float)$professional_services[$type_id]['price'] : 0; ?>" 
+                                    <input type="number" name="price_<?php echo $type_id; ?>" class="form-control" 
+                                        value="<?php echo isset($professional_services[$type_id]['price']) ? number_format((float)$professional_services[$type_id]['price'], 2) : '0.00'; ?>" 
                                         min="0" step="0.01">
                                 </label>
                             </div>
                         </div>
-                        <p><?php echo htmlspecialchars($type['description']); ?></p>
+                        <p><?php echo htmlspecialchars($type['description'] ?? ''); ?></p>
                         <div class="service-modes">
                             <div class="service-modes-title">Available Service Modes:</div>
                             <?php if (isset($service_modes_by_type[$type_id]) && !empty($service_modes_by_type[$type_id])): ?>
                                 <?php foreach ($service_modes_by_type[$type_id] as $mode): ?>
-                                    <span class="service-mode-tag"><?php echo htmlspecialchars($mode['name']); ?></span>
+                                    <span class="service-mode-tag"><?php echo htmlspecialchars($mode['name'] ?? ''); ?></span>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <p>No service modes available for this service type.</p>
