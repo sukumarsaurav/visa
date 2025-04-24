@@ -3,6 +3,7 @@ logs/*
 !logs/.gitkeep
 
 # Ignore configuration files with sensitive data
+config/.env
 config/db_connect.php
 config/google_auth.php
 
