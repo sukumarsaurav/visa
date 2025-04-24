@@ -12,121 +12,313 @@ $user_id = $_SESSION['user_id'];
 // Database connection would be here
 // Get user's applications
 // $applications = getUserApplications($user_id);
+
+// Set page variables
+$page_title = "Dashboard";
+$page_header = "Welcome to Your Dashboard";
+
+// Include header (handles session and authentication)
+require_once 'includes/header.php';
+
+// Get user data
+$user_id = $_SESSION['user_id'];
+
+// Get user's applications
+$sql = "SELECT ca.*, vt.name as visa_type, u.name as professional_name 
+        FROM case_applications ca 
+        LEFT JOIN visa_types vt ON ca.visa_type_id = vt.id
+        LEFT JOIN users u ON ca.professional_id = u.id
+        WHERE ca.client_id = ? AND ca.deleted_at IS NULL
+        ORDER BY ca.created_at DESC";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$applications = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+// Get documents for the user's applications
+$sql = "SELECT d.*, dt.name as document_type_name
+        FROM documents d
+        JOIN document_types dt ON d.document_type_id = dt.id
+        WHERE d.client_id = ? AND d.deleted_at IS NULL
+        ORDER BY d.uploaded_at DESC";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$documents = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+// Get recent notifications
+$sql = "SELECT * FROM notifications 
+        WHERE user_id = ? AND deleted_at IS NULL 
+        ORDER BY created_at DESC LIMIT 5";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$notifications = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Applicant Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <img src="<?php echo isset($_SESSION['profile_picture']) ? $_SESSION['profile_picture'] : '../../assets/images/default-avatar.png'; ?>" alt="Profile" class="profile-image">
-                <h3><?php echo htmlspecialchars($_SESSION['name']); ?></h3>
-                <p>Applicant</p>
-            </div>
-            
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link active">Dashboard</a></li>
-                <li class="nav-item"><a href="applications.php" class="nav-link">Applications</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
-        </div>
-        
-        <div class="main-content">
-            <div class="header">
-                <h1>Welcome, <?php echo htmlspecialchars($_SESSION['name']); ?></h1>
-            </div>
-            
-            <div class="card">
+<div class="dashboard-content">
+    <div class="welcome-header">
+        <h2>Welcome, <?php echo htmlspecialchars($_SESSION['user_name']); ?></h2>
+        <p>Here's an overview of your immigration journey</p>
+    </div>
+    
+    <div class="dashboard-cards">
+        <div class="card">
+            <div class="card-header">
                 <h2 class="card-title">Active Applications</h2>
-                <div class="application-summary">
-                    <?php
-                    // This would be populated from the case_applications table
-                    $sample_applications = [
-                        [
-                            'reference_number' => 'VISA-2023-001',
-                            'status' => 'pending_documents',
-                            'visa_type' => 'H-1B Work Visa',
-                            'professional' => 'Jane Smith'
-                        ]
-                    ];
-                    
-                    foreach ($sample_applications as $app): ?>
+            </div>
+            <div class="application-summary">
+                <?php if (empty($applications)): ?>
+                    <p class="no-data">No active applications found.</p>
+                <?php else: ?>
+                    <?php foreach ($applications as $app): ?>
                         <div class="application-item">
-                            <div class="status-badge status-<?php echo $app['status']; ?>">
+                            <div class="status-badge status-<?php echo htmlspecialchars($app['status']); ?>">
                                 <?php echo ucwords(str_replace('_', ' ', $app['status'])); ?>
                             </div>
                             <h3><?php echo htmlspecialchars($app['visa_type']); ?></h3>
                             <p>Reference: <?php echo htmlspecialchars($app['reference_number']); ?></p>
-                            <p>Professional: <?php echo htmlspecialchars($app['professional']); ?></p>
-                            <a href="applications.php?id=<?php echo urlencode($app['reference_number']); ?>" class="button">View Details</a>
+                            <p>Professional: <?php echo htmlspecialchars($app['professional_name']); ?></p>
+                            <a href="applications.php?id=<?php echo urlencode($app['id']); ?>" class="btn btn-primary">View Details</a>
                         </div>
                     <?php endforeach; ?>
-                </div>
+                <?php endif; ?>
             </div>
-            
-            <div class="card">
-                <h2 class="card-title">Required Documents</h2>
-                <div class="document-checklist">
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Documents</h2>
+            </div>
+            <div class="document-checklist">
+                <?php if (empty($documents)): ?>
+                    <p class="no-data">No documents found.</p>
+                <?php else: ?>
                     <ul>
-                        <li class="completed">
-                            <span class="checkmark">✓</span>
-                            Passport
-                        </li>
-                        <li class="completed">
-                            <span class="checkmark">✓</span>
-                            Resume/CV
-                        </li>
-                        <li class="pending">
-                            <span class="cross">✗</span>
-                            Educational Certificates
-                            <a href="documents.php" class="button button-small">Upload</a>
-                        </li>
-                        <li class="pending">
-                            <span class="cross">✗</span>
-                            Employment Letter
-                            <a href="documents.php" class="button button-small">Upload</a>
-                        </li>
+                        <?php foreach ($documents as $doc): ?>
+                            <li>
+                                <span class="document-type"><?php echo htmlspecialchars($doc['document_type_name']); ?></span>
+                                <span class="document-name"><?php echo htmlspecialchars($doc['name']); ?></span>
+                                <span class="document-date"><?php echo date('M j, Y', strtotime($doc['uploaded_at'])); ?></span>
+                                <a href="documents.php?view=<?php echo urlencode($doc['id']); ?>" class="btn btn-sm btn-primary">View</a>
+                            </li>
+                        <?php endforeach; ?>
                     </ul>
+                <?php endif; ?>
+                <div class="document-actions">
+                    <a href="documents.php" class="button button-primary">Manage Documents</a>
                 </div>
             </div>
-            
-            <div class="card">
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
                 <h2 class="card-title">Recent Updates</h2>
-                <div class="updates-list">
-                    <?php
-                    // This would be populated from the notifications table
-                    $notifications = [
-                        [
-                            'title' => 'Document Review Complete',
-                            'message' => 'Your passport has been verified successfully.',
-                            'created_at' => '2023-07-05 14:30:00'
-                        ],
-                        [
-                            'title' => 'Application Status Update',
-                            'message' => 'Your H-1B application is now under review.',
-                            'created_at' => '2023-07-04 09:15:00'
-                        ]
-                    ];
-                    
-                    foreach ($notifications as $notification): ?>
+            </div>
+            <div class="updates-list">
+                <?php if (empty($notifications)): ?>
+                    <p class="no-data">No recent updates found.</p>
+                <?php else: ?>
+                    <?php foreach ($notifications as $notification): ?>
                         <div class="update-item">
                             <h4><?php echo htmlspecialchars($notification['title']); ?></h4>
                             <p><?php echo htmlspecialchars($notification['message']); ?></p>
                             <small><?php echo date('F j, Y g:i A', strtotime($notification['created_at'])); ?></small>
                         </div>
                     <?php endforeach; ?>
-                </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
-</body>
-</html>
+</div>
+
+<style>
+.dashboard-content {
+    padding: 20px;
+}
+
+.welcome-header {
+    margin-bottom: 30px;
+}
+
+.welcome-header h2 {
+    margin: 0 0 10px 0;
+    color: #2c3e50;
+    font-size: 1.8rem;
+}
+
+.welcome-header p {
+    color: #7f8c8d;
+    margin: 0;
+}
+
+.dashboard-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+}
+
+.card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background-color: #f8f9fa;
+}
+
+.card-title {
+    margin: 0;
+    color: #2c3e50;
+    font-size: 1.2rem;
+}
+
+.application-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 20px;
+}
+
+.application-item {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 15px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.status-pending_documents { background: #fff3cd; color: #856404; }
+.status-under_review { background: #cce5ff; color: #004085; }
+.status-approved { background: #d4edda; color: #155724; }
+.status-rejected { background: #f8d7da; color: #721c24; }
+
+.document-checklist {
+    padding: 20px;
+}
+
+.document-checklist ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.document-checklist li {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    gap: 15px;
+}
+
+.document-checklist li:last-child {
+    border-bottom: none;
+}
+
+.document-type {
+    background: #e3f2fd;
+    color: #1976d2;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.document-name {
+    flex: 1;
+    color: #2c3e50;
+}
+
+.document-date {
+    color: #7f8c8d;
+    font-size: 0.85rem;
+}
+
+.document-actions {
+    margin-top: 20px;
+    text-align: right;
+}
+
+.updates-list {
+    padding: 20px;
+}
+
+.update-item {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+.update-item:last-child {
+    border-bottom: none;
+}
+
+.update-item h4 {
+    margin: 0 0 5px 0;
+    color: #2d3748;
+}
+
+.update-item p {
+    margin: 0 0 5px 0;
+    color: #4a5568;
+}
+
+.update-item small {
+    color: #718096;
+}
+
+.no-data {
+    text-align: center;
+    color: #718096;
+    padding: 20px;
+    font-style: italic;
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+    margin-left: auto;
+}
+
+.btn-primary, .button-primary {
+    background-color: #3498db;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.btn-primary:hover, .button-primary:hover {
+    background-color: #2980b9;
+}
+
+@media (min-width: 992px) {
+    .dashboard-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .dashboard-cards .card:last-child {
+        grid-column: span 2;
+    }
+}
+</style>
+
+<?php
+// Include footer
+require_once 'includes/footer.php';
+?>

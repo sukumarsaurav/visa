@@ -1,152 +1,213 @@
 <?php
-session_start();
+// Set page variables
+$page_title = "Profile";
+$page_header = "My Profile";
 
-// Check if user is logged in and is an applicant
-if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] != 'applicant') {
-    header("Location: ../../login.php");
-    exit();
-}
+// Include header (handles session and authentication)
+require_once 'includes/header.php';
 
+// Get user data
 $user_id = $_SESSION['user_id'];
-// Database connection would be here
-// Get user data from users table
-// $user = getUserData($user_id);
 
-$success_message = '';
-$error_message = '';
+// Handle profile update
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $name = trim($_POST['name']);
+    $email = trim($_POST['email']);
+    $success_message = '';
+    $error_message = '';
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    if (isset($_POST['update_profile'])) {
-        // Update user profile
-        // updateUserProfile($user_id, $_POST);
-        $success_message = "Profile updated successfully!";
-    } elseif (isset($_POST['change_password'])) {
-        // Change password logic
-        // changePassword($user_id, $_POST);
-        $success_message = "Password changed successfully!";
+    // Basic validation
+    if (empty($name) || empty($email)) {
+        $error_message = "Name and email are required fields.";
+    } else {
+        // Check if email is already taken by another user
+        $stmt = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+        $stmt->bind_param("si", $email, $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($result->num_rows > 0) {
+            $error_message = "This email is already in use by another account.";
+        } else {
+            // Handle profile picture upload
+            $profile_picture = $user['profile_picture']; // Keep existing picture by default
+            
+            if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
+                $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+                $max_size = 5 * 1024 * 1024; // 5MB
+                
+                if (!in_array($_FILES['profile_picture']['type'], $allowed_types)) {
+                    $error_message = "Invalid file type. Please upload a JPEG, PNG, or GIF image.";
+                } elseif ($_FILES['profile_picture']['size'] > $max_size) {
+                    $error_message = "File is too large. Maximum size is 5MB.";
+                } else {
+                    $upload_dir = '../../uploads/profiles/';
+                    if (!file_exists($upload_dir)) {
+                        mkdir($upload_dir, 0777, true);
+                    }
+                    
+                    $file_extension = pathinfo($_FILES['profile_picture']['name'], PATHINFO_EXTENSION);
+                    $new_filename = 'profile_' . $user_id . '_' . time() . '.' . $file_extension;
+                    $upload_path = $upload_dir . $new_filename;
+                    
+                    if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $upload_path)) {
+                        $profile_picture = $new_filename;
+                    } else {
+                        $error_message = "Failed to upload profile picture.";
+                    }
+                }
+            }
+            
+            if (empty($error_message)) {
+                // Update user profile - removed phone field as it's not in the users table
+                $stmt = $conn->prepare("UPDATE users SET name = ?, email = ?, profile_picture = ? WHERE id = ?");
+                $stmt->bind_param("sssi", $name, $email, $profile_picture, $user_id);
+                
+                if ($stmt->execute()) {
+                    $success_message = "Profile updated successfully!";
+                    // Update session data
+                    $_SESSION['name'] = $name;
+                    $_SESSION['profile_picture'] = $profile_picture;
+                } else {
+                    $error_message = "Failed to update profile. Please try again.";
+                }
+            }
+        }
     }
 }
+
+// Get latest user data
+$stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$user = $stmt->get_result()->fetch_assoc();
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Profile - Applicant Dashboard - Visafy</title>
-    <link rel="stylesheet" href="../styles.css">
-</head>
-<body>
-    <div class="dashboard-container">
-        <div class="sidebar">
-            <div class="profile-section">
-                <img src="<?php echo isset($_SESSION['profile_picture']) ? $_SESSION['profile_picture'] : '../../assets/images/default-avatar.png'; ?>" alt="Profile" class="profile-image">
-                <h3><?php echo htmlspecialchars($_SESSION['name']); ?></h3>
-                <p>Applicant</p>
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Profile Information</h2>
+    </div>
+    
+    <?php if (isset($success_message)): ?>
+        <div class="alert alert-success">
+            <?php echo htmlspecialchars($success_message); ?>
+        </div>
+    <?php endif; ?>
+    
+    <?php if (isset($error_message)): ?>
+        <div class="alert alert-danger">
+            <?php echo htmlspecialchars($error_message); ?>
+        </div>
+    <?php endif; ?>
+    
+    <form action="" method="POST" enctype="multipart/form-data" class="profile-form">
+        <div class="form-group">
+            <label for="profile_picture">Profile Picture</label>
+            <div class="profile-picture-container">
+                <img src="<?php echo !empty($user['profile_picture']) ? '../../uploads/profiles/' . $user['profile_picture'] : '../../assets/images/default-avatar.png'; ?>" 
+                     alt="Profile Picture" class="current-profile-picture">
+                <input type="file" id="profile_picture" name="profile_picture" accept="image/*" class="form-control">
             </div>
-            
-            <ul class="nav-menu">
-                <li class="nav-item"><a href="index.php" class="nav-link">Dashboard</a></li>
-                <li class="nav-item"><a href="applications.php" class="nav-link">Applications</a></li>
-                <li class="nav-item"><a href="documents.php" class="nav-link">Documents</a></li>
-                <li class="nav-item"><a href="profile.php" class="nav-link active">Profile</a></li>
-                <li class="nav-item"><a href="../../logout.php" class="nav-link">Logout</a></li>
-            </ul>
         </div>
         
-        <div class="main-content">
-            <div class="header">
-                <h1>My Profile</h1>
-            </div>
-            
-            <?php if ($success_message): ?>
-                <div class="alert success"><?php echo htmlspecialchars($success_message); ?></div>
-            <?php endif; ?>
-            
-            <?php if ($error_message): ?>
-                <div class="alert error"><?php echo htmlspecialchars($error_message); ?></div>
-            <?php endif; ?>
-            
-            <div class="card">
-                <h2 class="card-title">Personal Information</h2>
-                <form method="POST" action="profile.php" enctype="multipart/form-data">
-                    <input type="hidden" name="update_profile" value="1">
-                    
-                    <div class="form-group">
-                        <label for="name">Full Name</label>
-                        <input type="text" id="name" name="name" value="<?php echo htmlspecialchars($_SESSION['name']); ?>" required class="form-control">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="email">Email Address</label>
-                        <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($_SESSION['email']); ?>" readonly class="form-control">
-                        <p class="form-hint">Email cannot be changed</p>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="profile_picture">Profile Picture</label>
-                        <input type="file" id="profile_picture" name="profile_picture" class="form-control" accept="image/*">
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="submit" class="button">Update Profile</button>
-                    </div>
-                </form>
-            </div>
-            
-            <div class="card">
-                <h2 class="card-title">Change Password</h2>
-                <form method="POST" action="profile.php">
-                    <input type="hidden" name="change_password" value="1">
-                    
-                    <div class="form-group">
-                        <label for="current_password">Current Password</label>
-                        <input type="password" id="current_password" name="current_password" required class="form-control">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="new_password">New Password</label>
-                        <input type="password" id="new_password" name="new_password" required class="form-control">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="confirm_password">Confirm New Password</label>
-                        <input type="password" id="confirm_password" name="confirm_password" required class="form-control">
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="submit" class="button">Change Password</button>
-                    </div>
-                </form>
-            </div>
-            
-            <div class="card">
-                <h2 class="card-title">Account Settings</h2>
-                <form method="POST" action="profile.php">
-                    <div class="form-group">
-                        <label for="notifications">Email Notifications</label>
-                        <div class="checkbox-group">
-                            <label>
-                                <input type="checkbox" name="notifications[]" value="application_updates" checked>
-                                Application Updates
-                            </label>
-                            <label>
-                                <input type="checkbox" name="notifications[]" value="document_requests" checked>
-                                Document Requests
-                            </label>
-                            <label>
-                                <input type="checkbox" name="notifications[]" value="professional_messages" checked>
-                                Messages from Professionals
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="submit" class="button">Save Settings</button>
-                    </div>
-                </form>
-            </div>
+        <div class="form-group">
+            <label for="name">Full Name</label>
+            <input type="text" id="name" name="name" value="<?php echo htmlspecialchars($user['name']); ?>" required class="form-control">
         </div>
-    </div>
-</body>
-</html> 
+        
+        <div class="form-group">
+            <label for="email">Email Address</label>
+            <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($user['email']); ?>" required class="form-control">
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="button button-primary">Save Changes</button>
+        </div>
+    </form>
+</div>
+
+<style>
+.profile-form {
+    padding: 20px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: #2d3748;
+}
+
+.form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+.profile-picture-container {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 10px;
+}
+
+.current-profile-picture {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.form-actions {
+    margin-top: 30px;
+}
+
+.button-primary {
+    background-color: #3498db;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.button-primary:hover {
+    background-color: #2980b9;
+}
+
+.alert {
+    padding: 15px;
+    margin: 20px;
+    border-radius: 4px;
+}
+
+.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+</style>
+
+<?php
+// Include footer
+require_once 'includes/footer.php';
+?>

@@ -1,311 +1,278 @@
 <?php
-require_once '../../../config/db_connect.php';
 session_start();
+header('Content-Type: application/json');
 
-// Get user_id from session
-$user_id = $_SESSION['user_id'] ?? null;
-
-if (!$user_id) {
-    echo json_encode(['success' => false, 'error' => 'Unauthorized']);
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['success' => false, 'message' => 'Unauthorized access']);
     exit;
 }
+
+$user_id = $_SESSION['user_id'];
 
 // Load environment variables
-function loadEnv($path) {
-    if (file_exists($path)) {
-        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        foreach ($lines as $line) {
-            if (strpos($line, '=') !== false && strpos($line, '#') !== 0) {
-                list($key, $value) = explode('=', $line, 2);
-                $key = trim($key);
-                $value = trim($value);
-                $_ENV[$key] = $value;
-                putenv("$key=$value");
+$envFile = __DIR__ . '/../../../config/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        if (strpos($line, '=') !== false && strpos($line, '#') !== 0) {
+            list($key, $value) = explode('=', $line, 2);
+            $_ENV[trim($key)] = trim($value);
+        }
+    }
+}
+
+// Database connection
+try {
+    $pdo = new PDO(
+        "mysql:host={$_ENV['DB_HOST']};dbname={$_ENV['DB_NAME']};charset=utf8mb4",
+        $_ENV['DB_USER'],
+        $_ENV['DB_PASS'],
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+    );
+} catch (PDOException $e) {
+    echo json_encode(['success' => false, 'message' => 'Database connection failed']);
+    exit;
+}
+
+// Helper function to validate conversation ownership
+function validateConversation($pdo, $conversationId, $userId) {
+    $stmt = $pdo->prepare("SELECT id FROM ai_chat_conversations WHERE id = ? AND user_id = ? AND is_deleted = 0");
+    $stmt->execute([$conversationId, $userId]);
+    return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+}
+
+// Handle different actions
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
+
+switch ($action) {
+    case 'delete_conversation':
+        if (!isset($_POST['conversation_id'])) {
+            echo json_encode(['success' => false, 'message' => 'Conversation ID required']);
+            exit;
+        }
+        
+        $conversationId = $_POST['conversation_id'];
+        if (!validateConversation($pdo, $conversationId, $user_id)) {
+            echo json_encode(['success' => false, 'message' => 'Invalid conversation']);
+            exit;
+        }
+        
+        $stmt = $pdo->prepare("UPDATE ai_chat_conversations SET is_deleted = 1 WHERE id = ?");
+        $success = $stmt->execute([$conversationId]);
+        echo json_encode(['success' => $success]);
+        break;
+        
+    case 'get_usage':
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as count 
+            FROM ai_chat_messages 
+            WHERE user_id = ? 
+            AND role = 'user' 
+            AND MONTH(created_at) = MONTH(CURRENT_DATE()) 
+            AND YEAR(created_at) = YEAR(CURRENT_DATE())
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        echo json_encode(['success' => true, 'usage' => $result['count']]);
+        break;
+        
+    case 'create_conversation':
+        $stmt = $pdo->prepare("
+            INSERT INTO ai_chat_conversations (user_id, created_at) 
+            VALUES (?, NOW())
+        ");
+        $success = $stmt->execute([$user_id]);
+        $conversationId = $pdo->lastInsertId();
+        
+        // Add initial system message
+        $systemMessage = "You are a helpful AI assistant. How can I help you today?";
+        $stmt = $pdo->prepare("
+            INSERT INTO ai_chat_messages (conversation_id, user_id, role, content, created_at) 
+            VALUES (?, ?, 'system', ?, NOW())
+        ");
+        $stmt->execute([$conversationId, $user_id, $systemMessage]);
+        
+        echo json_encode(['success' => $success, 'conversation_id' => $conversationId]);
+        break;
+        
+    case 'get_conversation':
+        $conversation_id = $_GET['conversation_id'] ?? null;
+        
+        if (!$conversation_id) {
+            echo json_encode(['success' => false, 'message' => 'Conversation ID is required']);
+            exit;
+        }
+        
+        // Verify the conversation belongs to the user
+        $stmt = $pdo->prepare("SELECT * FROM ai_chat_conversations WHERE id = ? AND user_id = ? AND is_deleted = 0");
+        $stmt->execute([$conversation_id, $user_id]);
+        $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$conversation) {
+            echo json_encode(['success' => false, 'message' => 'Conversation not found']);
+            exit;
+        }
+        
+        // Get all messages for the conversation
+        $stmt = $pdo->prepare("
+            SELECT id, role, content, created_at 
+            FROM ai_chat_messages 
+            WHERE conversation_id = ? 
+            AND is_deleted = 0 
+            ORDER BY created_at ASC
+        ");
+        $stmt->execute([$conversation_id]);
+        $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        echo json_encode([
+            'success' => true,
+            'conversation' => $conversation,
+            'messages' => $messages
+        ]);
+        break;
+        
+    case 'send_message':
+        $conversation_id = $_POST['conversation_id'] ?? null;
+        $message = $_POST['message'] ?? '';
+        
+        if (!$conversation_id || !$message) {
+            echo json_encode(['success' => false, 'message' => 'Conversation ID and message are required']);
+            exit;
+        }
+        
+        // Verify the conversation exists and belongs to the user
+        $stmt = $pdo->prepare("SELECT * FROM ai_chat_conversations WHERE id = ? AND user_id = ? AND is_deleted = 0");
+        $stmt->execute([$conversation_id, $user_id]);
+        $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$conversation) {
+            echo json_encode(['success' => false, 'message' => 'Invalid conversation']);
+            exit;
+        }
+        
+        // Check monthly message limit
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as count 
+            FROM ai_chat_messages 
+            WHERE user_id = ? 
+            AND MONTH(created_at) = MONTH(CURRENT_DATE()) 
+            AND YEAR(created_at) = YEAR(CURRENT_DATE())
+            AND role = 'user'
+        ");
+        $stmt->execute([$user_id]);
+        $usage = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($usage['count'] >= 50) {
+            echo json_encode(['success' => false, 'message' => 'Monthly message limit reached']);
+            exit;
+        }
+        
+        // Begin transaction
+        $pdo->beginTransaction();
+        
+        try {
+            // Save user message
+            $stmt = $pdo->prepare("
+                INSERT INTO ai_chat_messages (conversation_id, user_id, role, content) 
+                VALUES (?, ?, 'user', ?)
+            ");
+            $stmt->execute([$conversation_id, $user_id, $message]);
+            
+            // Update conversation title if it's the first message
+            if (!$conversation['title']) {
+                $title = strlen($message) > 50 ? substr($message, 0, 47) . '...' : $message;
+                $stmt = $pdo->prepare("UPDATE ai_chat_conversations SET title = ? WHERE id = ?");
+                $stmt->execute([$title, $conversation_id]);
             }
+            
+            // Prepare conversation history for AI
+            $stmt = $pdo->prepare("
+                SELECT role, content 
+                FROM ai_chat_messages 
+                WHERE conversation_id = ? 
+                AND is_deleted = 0 
+                ORDER BY created_at ASC
+            ");
+            $stmt->execute([$conversation_id]);
+            $history = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Prepare messages for API
+            $messages = [];
+            $messages[] = [
+                'role' => 'system',
+                'content' => 'You are a helpful assistant. Provide clear and concise responses.'
+            ];
+            
+            foreach ($history as $msg) {
+                $messages[] = [
+                    'role' => $msg['role'],
+                    'content' => $msg['content']
+                ];
+            }
+            
+            // Call OpenAI API
+            $ch = curl_init('https://api.openai.com/v1/chat/completions');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . $_ENV['OPENAI_API_KEY']
+            ]);
+            
+            $data = [
+                'model' => 'gpt-3.5-turbo',
+                'messages' => $messages,
+                'temperature' => 0.7,
+                'max_tokens' => 1000
+            ];
+            
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+            $response = curl_exec($ch);
+            
+            if (curl_errno($ch)) {
+                throw new Exception('API call failed: ' . curl_error($ch));
+            }
+            
+            curl_close($ch);
+            $result = json_decode($response, true);
+            
+            if (!isset($result['choices'][0]['message']['content'])) {
+                throw new Exception('Invalid API response');
+            }
+            
+            $ai_response = $result['choices'][0]['message']['content'];
+            
+            // Save AI response
+            $stmt = $pdo->prepare("
+                INSERT INTO ai_chat_messages (conversation_id, user_id, role, content) 
+                VALUES (?, ?, 'assistant', ?)
+            ");
+            $stmt->execute([$conversation_id, $user_id, $ai_response]);
+            
+            // Update usage tracking
+            $stmt = $pdo->prepare("
+                INSERT INTO ai_chat_usage (user_id, message_count, month, year) 
+                VALUES (?, 1, MONTH(CURRENT_DATE()), YEAR(CURRENT_DATE()))
+                ON DUPLICATE KEY UPDATE message_count = message_count + 1
+            ");
+            $stmt->execute([$user_id]);
+            
+            $pdo->commit();
+            
+            echo json_encode([
+                'success' => true,
+                'message' => 'Message sent successfully',
+                'response' => $ai_response
+            ]);
+            
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            error_log('Error in send_message: ' . $e->getMessage());
+            echo json_encode(['success' => false, 'message' => 'Failed to process message']);
         }
-    }
-}
-
-// Load the .env file with explicit error checking
-$envPath = __DIR__ . '/../../../config/.env';
-if (!file_exists($envPath)) {
-    error_log("Error: .env file not found at: " . $envPath);
-    echo json_encode(['success' => false, 'error' => 'Configuration file not found']);
-    exit;
-}
-
-loadEnv($envPath);
-
-// Verify API key is loaded
-$api_key = $_ENV['OPENAI_API_KEY'] ?? null;
-if (!$api_key) {
-    error_log("Error: OPENAI_API_KEY not found in environment variables");
-    echo json_encode(['success' => false, 'error' => 'API key not configured']);
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action'])) {
-        switch ($_POST['action']) {
-            case 'delete_conversation':
-                $conversation_id = (int)$_POST['conversation_id'];
-                $sql = "UPDATE ai_chat_conversations SET deleted_at = NOW() 
-                        WHERE id = ? AND professional_id = ?";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("ii", $conversation_id, $user_id);
-                if ($stmt->execute()) {
-                    echo json_encode(['success' => true]);
-                } else {
-                    echo json_encode(['success' => false, 'error' => $conn->error]);
-                }
-                break;
-
-            case 'get_usage':
-                $month = date('Y-m');
-                $sql = "SELECT message_count FROM ai_chat_usage 
-                        WHERE professional_id = ? AND month = ?";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("is", $user_id, $month);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $usage = $result->fetch_assoc();
-                $messages_used = $usage ? $usage['message_count'] : 0;
-                echo json_encode(['success' => true, 'usage' => $messages_used]);
-                break;
-
-            case 'create_conversation':
-                $title = "New Chat";
-                $chat_type = isset($_POST['chat_type']) ? $_POST['chat_type'] : 'ircc';
-                $sql = "INSERT INTO ai_chat_conversations (professional_id, title, chat_type) 
-                        VALUES (?, ?, ?)";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("iss", $user_id, $title, $chat_type);
-                if ($stmt->execute()) {
-                    $conversation_id = $conn->insert_id;
-                    
-                    // Add initial system message
-                    $welcome_msg = "Hello! I'm your visa and immigration consultant assistant. How can I help you today?";
-                    $sql = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                            VALUES (?, ?, 'assistant', ?)";
-                    $stmt = $conn->prepare($sql);
-                    $stmt->bind_param("iis", $conversation_id, $user_id, $welcome_msg);
-                    $stmt->execute();
-                    
-                    echo json_encode([
-                        'success' => true, 
-                        'conversation_id' => $conversation_id,
-                        'welcome_message' => $welcome_msg
-                    ]);
-                } else {
-                    echo json_encode(['success' => false, 'error' => $conn->error]);
-                }
-                break;
-
-            case 'get_conversation':
-                $conversation_id = (int)$_POST['conversation_id'];
-                
-                // Get conversation details
-                $sql = "SELECT * FROM ai_chat_conversations 
-                        WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("ii", $conversation_id, $user_id);
-                $stmt->execute();
-                $conversation = $stmt->get_result()->fetch_assoc();
-                
-                if (!$conversation) {
-                    echo json_encode(['success' => false, 'error' => 'Conversation not found']);
-                    break;
-                }
-                
-                // Get messages
-                $sql = "SELECT id, role, content, created_at FROM ai_chat_messages 
-                        WHERE conversation_id = ? AND professional_id = ? AND deleted_at IS NULL 
-                        ORDER BY created_at ASC";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("ii", $conversation_id, $user_id);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $messages = [];
-                while ($row = $result->fetch_assoc()) {
-                    $messages[] = [
-                        'id' => $row['id'],
-                        'role' => $row['role'],
-                        'content' => $row['content'],
-                        'created_at' => $row['created_at']
-                    ];
-                }
-                
-                echo json_encode([
-                    'success' => true, 
-                    'conversation' => $conversation,
-                    'messages' => $messages
-                ]);
-                break;
-
-            case 'send_message':
-                // Check monthly message limit
-                $month = date('Y-m');
-                $sql = "SELECT message_count FROM ai_chat_usage 
-                        WHERE professional_id = ? AND month = ?";
-                $stmt = $conn->prepare($sql);
-                $stmt->bind_param("is", $user_id, $month);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $usage = $result->fetch_assoc();
-                
-                if ($usage && $usage['message_count'] >= 50) {
-                    echo json_encode(['success' => false, 'error' => 'Monthly message limit (50) reached']);
-                    break;
-                }
-
-                $message = $_POST['message'] ?? '';
-                $conversation_id = (int)$_POST['conversation_id'];
-
-                if (!empty($message)) {
-                    // Verify conversation exists and belongs to user
-                    $sql = "SELECT id, chat_type FROM ai_chat_conversations 
-                            WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
-                    $stmt = $conn->prepare($sql);
-                    $stmt->bind_param("ii", $conversation_id, $user_id);
-                    $stmt->execute();
-                    $conversation = $stmt->get_result()->fetch_assoc();
-                    
-                    if (!$conversation) {
-                        echo json_encode(['success' => false, 'error' => 'Invalid conversation']);
-                        break;
-                    }
-
-                    // Save user message
-                    $sql = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                            VALUES (?, ?, 'user', ?)";
-                    $stmt = $conn->prepare($sql);
-                    $stmt->bind_param("iis", $conversation_id, $user_id, $message);
-                    if (!$stmt->execute()) {
-                        echo json_encode(['success' => false, 'error' => 'Failed to save message']);
-                        break;
-                    }
-
-                    // Update conversation title with first message
-                    $sql = "UPDATE ai_chat_conversations 
-                            SET title = ? 
-                            WHERE id = ? AND professional_id = ? 
-                            AND (title = 'New Chat' OR title LIKE 'New Chat%')";
-                    $stmt = $conn->prepare($sql);
-                    $short_title = substr($message, 0, 50) . (strlen($message) > 50 ? "..." : "");
-                    $stmt->bind_param("sii", $short_title, $conversation_id, $user_id);
-                    $stmt->execute();
-
-                    // Get conversation history
-                    $sql = "SELECT role, content FROM ai_chat_messages 
-                            WHERE conversation_id = ? AND deleted_at IS NULL
-                            ORDER BY created_at DESC LIMIT 10";
-                    $stmt = $conn->prepare($sql);
-                    $stmt->bind_param("i", $conversation_id);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-                    $history = [];
-                    while ($row = $result->fetch_assoc()) {
-                        array_unshift($history, [
-                            "role" => $row['role'],
-                            "content" => $row['content']
-                        ]);
-                    }
-
-                    // Call OpenAI API with error handling
-                    $ch = curl_init();
-                    curl_setopt($ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions');
-                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                    curl_setopt($ch, CURLOPT_POST, true);
-                    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                        'Content-Type: application/json',
-                        'Authorization: Bearer ' . $api_key
-                    ]);
-
-                    // Enable verbose error reporting
-                    curl_setopt($ch, CURLOPT_VERBOSE, true);
-                    $verbose = fopen('php://temp', 'w+');
-                    curl_setopt($ch, CURLOPT_STDERR, $verbose);
-
-                    // Prepare messages array with system message and history
-                    $system_message = $conversation['chat_type'] === 'cases' 
-                        ? "You are a legal assistant specializing in Canadian immigration case law. Provide accurate information about immigration cases, precedents, and court decisions. Be precise and professional."
-                        : "You are a friendly visa and immigration consultant assistant. Provide accurate, helpful information about Canadian visa processes, IRCC procedures, and immigration requirements. Be clear and professional.";
-
-                    $messages = [["role" => "system", "content" => $system_message]];
-                    $messages = array_merge($messages, $history);
-
-                    $data = [
-                        'model' => 'gpt-3.5-turbo',
-                        'messages' => $messages,
-                        'temperature' => 0.7,
-                        'max_tokens' => 500
-                    ];
-
-                    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-                    $response = curl_exec($ch);
-                    
-                    if ($response === false) {
-                        rewind($verbose);
-                        $verboseLog = stream_get_contents($verbose);
-                        error_log("cURL Error: " . curl_error($ch) . "\n" . $verboseLog);
-                        echo json_encode([
-                            'success' => false, 
-                            'error' => 'Could not connect to the OpenAI API',
-                            'details' => curl_error($ch)
-                        ]);
-                        curl_close($ch);
-                        break;
-                    }
-
-                    $result = json_decode($response, true);
-                    curl_close($ch);
-
-                    if (isset($result['error'])) {
-                        error_log("OpenAI API Error: " . json_encode($result['error']));
-                        echo json_encode([
-                            'success' => false, 
-                            'error' => $result['error']['message'] ?? 'An unknown error occurred'
-                        ]);
-                        break;
-                    }
-
-                    if (isset($result['choices'][0]['message']['content'])) {
-                        $ai_response = $result['choices'][0]['message']['content'];
-                        
-                        // Save AI response
-                        $sql = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                                VALUES (?, ?, 'assistant', ?)";
-                        $stmt = $conn->prepare($sql);
-                        $stmt->bind_param("iis", $conversation_id, $user_id, $ai_response);
-                        if ($stmt->execute()) {
-                            // Update usage
-                            $sql = "INSERT INTO ai_chat_usage (professional_id, month, message_count) 
-                                    VALUES (?, ?, 1)
-                                    ON DUPLICATE KEY UPDATE message_count = message_count + 1";
-                            $stmt = $conn->prepare($sql);
-                            $stmt->bind_param("is", $user_id, $month);
-                            $stmt->execute();
-
-                            echo json_encode(['success' => true, 'message' => $ai_response]);
-                        } else {
-                            echo json_encode(['success' => false, 'error' => 'Failed to save AI response']);
-                        }
-                    } else {
-                        echo json_encode([
-                            'success' => false, 
-                            'error' => 'Invalid response format from AI service',
-                            'response' => $response
-                        ]);
-                    }
-                } else {
-                    echo json_encode(['success' => false, 'error' => 'Message cannot be empty']);
-                }
-                break;
-
-            default:
-                echo json_encode(['success' => false, 'error' => 'Invalid action']);
-                break;
-        }
-    }
+        break;
+        
+    default:
+        echo json_encode(['success' => false, 'message' => 'Invalid action']);
 }
 ?> 

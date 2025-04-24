@@ -339,7 +339,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
 <style>
     .messages-container {
         display: flex;
-        height: calc(100vh - 200px);
+        height: calc(100vh - 60px);
         min-height: 500px;
         background-color: white;
         border-radius: 8px;
@@ -690,6 +690,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
 </style>
 
 <script>
+// Global variables
+let currentConversationId = null;
+let isMessageSending = false;
+
 // Auto-scroll to bottom of messages
 function scrollToBottom() {
     const messageList = document.getElementById('messageList');
@@ -712,6 +716,225 @@ function autoResizeTextarea() {
     }
 }
 
+// Format timestamp
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Create a new conversation
+async function createConversation() {
+    try {
+        const response = await fetch('ajax/chat_handler.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'action=create_conversation'
+        });
+        const data = await response.json();
+        if (data.success) {
+            currentConversationId = data.conversation_id;
+            return currentConversationId;
+        }
+        throw new Error(data.message || 'Failed to create conversation');
+    } catch (error) {
+        console.error('Error creating conversation:', error);
+        return null;
+    }
+}
+
+// Send message
+async function sendMessage(message) {
+    if (isMessageSending) return;
+    isMessageSending = true;
+    
+    const messageList = document.getElementById('messageList');
+    
+    try {
+        if (!currentConversationId) {
+            currentConversationId = await createConversation();
+            if (!currentConversationId) throw new Error('Failed to create conversation');
+        }
+        
+        // Add user message to UI immediately
+        const userMessageDiv = document.createElement('div');
+        userMessageDiv.className = 'message sent';
+        userMessageDiv.innerHTML = `
+            <div class="message-content">
+                ${message}
+                <div class="message-time">${formatTimestamp(new Date())}</div>
+            </div>
+        `;
+        messageList.appendChild(userMessageDiv);
+        scrollToBottom();
+        
+        const response = await fetch('ajax/chat_handler.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `action=send_message&conversation_id=${currentConversationId}&message=${encodeURIComponent(message)}`
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            // Add AI response to UI
+            if (data.response) {
+                const aiMessageDiv = document.createElement('div');
+                aiMessageDiv.className = 'message received';
+                aiMessageDiv.innerHTML = `
+                    <div class="message-content">
+                        ${data.response}
+                        <div class="message-time">${formatTimestamp(new Date())}</div>
+                    </div>
+                `;
+                messageList.appendChild(aiMessageDiv);
+                scrollToBottom();
+            }
+            
+            // Clear input and resize
+            document.getElementById('messageInput').value = '';
+            autoResizeTextarea();
+            
+            // Update conversation list if needed
+            updateConversationList();
+        } else {
+            throw new Error(data.message || 'Failed to send message');
+        }
+    } catch (error) {
+        console.error('Error sending message:', error);
+        alert(error.message || 'Failed to send message. Please try again.');
+        // Remove the user message if it failed
+        if (messageList.lastChild) {
+            messageList.removeChild(messageList.lastChild);
+        }
+    } finally {
+        isMessageSending = false;
+    }
+}
+
+// Load conversation messages
+async function loadConversation(conversationId) {
+    try {
+        const response = await fetch(`ajax/chat_handler.php?action=get_conversation&conversation_id=${conversationId}`);
+        const data = await response.json();
+        if (data.success) {
+            const messageList = document.getElementById('messageList');
+            messageList.innerHTML = '';
+            
+            // Update conversation title if available
+            const titleElement = document.getElementById('conversationTitle');
+            if (titleElement && data.conversation && data.conversation.title) {
+                titleElement.textContent = data.conversation.title;
+            }
+            
+            let lastDate = '';
+            data.messages.forEach(message => {
+                const messageDate = new Date(message.created_at).toLocaleDateString();
+                if (messageDate !== lastDate) {
+                    const dateDiv = document.createElement('div');
+                    dateDiv.className = 'date-separator';
+                    dateDiv.innerHTML = `<span>${messageDate}</span>`;
+                    messageList.appendChild(dateDiv);
+                    lastDate = messageDate;
+                }
+                
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${message.role === 'user' ? 'sent' : 'received'}`;
+                messageDiv.innerHTML = `
+                    <div class="message-content">
+                        ${message.content}
+                        <div class="message-time">${formatTimestamp(message.created_at)}</div>
+                    </div>
+                `;
+                messageList.appendChild(messageDiv);
+            });
+            scrollToBottom();
+            
+            // Enable input after loading
+            const messageInput = document.getElementById('messageInput');
+            if (messageInput) {
+                messageInput.disabled = false;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading conversation:', error);
+        alert('Failed to load conversation. Please try again.');
+    }
+}
+
+// Update conversation list
+async function updateConversationList() {
+    try {
+        const response = await fetch('ajax/chat_handler.php?action=get_conversations');
+        const data = await response.json();
+        if (data.success && data.conversations) {
+            const conversationList = document.getElementById('conversationList');
+            if (conversationList) {
+                conversationList.innerHTML = '';
+                data.conversations.forEach(conv => {
+                    const item = document.createElement('div');
+                    item.className = `conversation-item${conv.id === currentConversationId ? ' active' : ''}`;
+                    item.dataset.conversationId = conv.id;
+                    item.innerHTML = `
+                        <div class="conversation-title">${conv.title || 'New Conversation'}</div>
+                        <div class="conversation-time">${formatTimestamp(conv.created_at)}</div>
+                    `;
+                    item.addEventListener('click', () => {
+                        currentConversationId = conv.id;
+                        loadConversation(conv.id);
+                        document.querySelectorAll('.conversation-item').forEach(el => {
+                            el.classList.remove('active');
+                        });
+                        item.classList.add('active');
+                    });
+                    conversationList.appendChild(item);
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error updating conversation list:', error);
+    }
+}
+
+// Check usage
+async function checkUsage() {
+    try {
+        const response = await fetch('ajax/chat_handler.php?action=get_usage');
+        const data = await response.json();
+        if (data.success) {
+            // Update UI with usage information if needed
+            console.log('Current usage:', data.usage);
+        }
+    } catch (error) {
+        console.error('Error checking usage:', error);
+    }
+}
+
+// Delete conversation
+async function deleteConversation(conversationId) {
+    try {
+        const response = await fetch('ajax/chat_handler.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `action=delete_conversation&conversation_id=${conversationId}`
+        });
+        const data = await response.json();
+        if (data.success) {
+            // Refresh conversation list or handle UI update
+            if (currentConversationId === conversationId) {
+                currentConversationId = null;
+                document.getElementById('messageList').innerHTML = '';
+            }
+        }
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+    }
+}
+
 // On page load
 document.addEventListener('DOMContentLoaded', function() {
     scrollToBottom();
@@ -720,13 +943,28 @@ document.addEventListener('DOMContentLoaded', function() {
     // Form submission
     const messageForm = document.getElementById('messageForm');
     if (messageForm) {
-        messageForm.addEventListener('submit', function() {
+        messageForm.addEventListener('submit', function(event) {
+            event.preventDefault();
             const messageInput = document.getElementById('messageInput');
-            if (messageInput.value.trim() === '') {
-                event.preventDefault();
-                return false;
+            const message = messageInput.value.trim();
+            if (message !== '') {
+                sendMessage(message);
             }
         });
+    }
+    
+    // Initial conversation list load
+    updateConversationList();
+    
+    // Check initial usage
+    checkUsage();
+    
+    // Load last active conversation if available
+    const urlParams = new URLSearchParams(window.location.search);
+    const conversationId = urlParams.get('conversation_id');
+    if (conversationId) {
+        currentConversationId = conversationId;
+        loadConversation(conversationId);
     }
 });
 </script>
@@ -735,3 +973,4 @@ document.addEventListener('DOMContentLoaded', function() {
 // Include footer
 require_once 'includes/footer.php';
 ?>
+
