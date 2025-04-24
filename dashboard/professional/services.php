@@ -245,8 +245,6 @@ while ($service = $services_result->fetch_assoc()) {
 
 <style>
 .content-wrapper {
-    padding: 20px;
-    max-width: 1200px;
     margin: 0 auto;
 }
 

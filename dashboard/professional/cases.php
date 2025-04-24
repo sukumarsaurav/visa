@@ -163,7 +163,7 @@ include_once('includes/header.php');
         <?php echo $error_message; ?>
     </div>
 <?php endif; ?>
-
+<div class="content-wrapper">
 <div class="card">
     <h2 class="card-title">Active Cases</h2>
     <div class="filters">
@@ -325,7 +325,7 @@ include_once('includes/header.php');
         </form>
     </div>
 </div>
-
+</div>
 <?php
 // Include footer
 include_once('includes/footer.php');

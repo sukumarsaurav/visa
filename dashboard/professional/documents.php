@@ -180,31 +180,31 @@ include_once('includes/header.php');
 <h1 class="page-title"><?php echo $page_header; ?></h1>
 
 <?php if ($success_message): ?>
-    <div class="alert alert-success">
-        <?php echo $success_message; ?>
-    </div>
+<div class="alert alert-success">
+    <?php echo $success_message; ?>
+</div>
 <?php endif; ?>
 
 <?php if ($error_message): ?>
-    <div class="alert alert-danger">
-        <?php echo $error_message; ?>
-    </div>
+<div class="alert alert-danger">
+    <?php echo $error_message; ?>
+</div>
 <?php endif; ?>
 
 <?php if (isset($header_buttons)): ?>
-    <div class="header-actions">
-        <?php echo $header_buttons; ?>
-    </div>
+<div class="header-actions">
+    <?php echo $header_buttons; ?>
+</div>
 <?php endif; ?>
-
-<div id="uploadFormContainer" class="card" style="display: none;">
-    <h2 class="card-title">Upload New Document</h2>
-    <form method="POST" action="documents.php" enctype="multipart/form-data">
-        <div class="form-group">
-            <label for="case_id">Select Case</label>
-            <select id="case_id" name="case_id" class="form-control" required>
-                <option value="">-- Select Case --</option>
-                <?php
+<div class="content-wrapper">
+    <div id="uploadFormContainer" class="card" style="display: none;">
+        <h2 class="card-title">Upload New Document</h2>
+        <form method="POST" action="documents.php" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="case_id">Select Case</label>
+                <select id="case_id" name="case_id" class="form-control" required>
+                    <option value="">-- Select Case --</option>
+                    <?php
                 // Get cases for dropdown
                 $cases_query = "SELECT ca.id, ca.reference_number, u.name as client_name, vt.name as visa_type
                                FROM case_applications ca
@@ -222,14 +222,14 @@ include_once('includes/header.php');
                     echo '<option value="' . $case['id'] . '">' . htmlspecialchars($case['reference_number']) . ' - ' . htmlspecialchars($case['client_name']) . ' (' . htmlspecialchars($case['visa_type']) . ')</option>';
                 }
                 ?>
-            </select>
-        </div>
-        
-        <div class="form-group">
-            <label for="document_type">Document Type</label>
-            <select id="document_type" name="document_type_id" class="form-control" required>
-                <option value="">-- Select Type --</option>
-                <?php
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="document_type">Document Type</label>
+                <select id="document_type" name="document_type_id" class="form-control" required>
+                    <option value="">-- Select Type --</option>
+                    <?php
                 // Get document types for dropdown
                 $types_query = "SELECT id, name FROM document_types WHERE is_active = 1 ORDER BY name";
                 $stmt = $conn->prepare($types_query);
@@ -240,88 +240,91 @@ include_once('includes/header.php');
                     echo '<option value="' . $type['id'] . '">' . htmlspecialchars($type['name']) . '</option>';
                 }
                 ?>
-            </select>
-        </div>
-        
-        <div class="form-group">
-            <label for="document_name">Document Name</label>
-            <input type="text" id="document_name" name="name" class="form-control" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="document_file">File</label>
-            <input type="file" id="document_file" name="file" class="form-control" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="document_description">Description (Optional)</label>
-            <textarea id="document_description" name="description" class="form-control" rows="3"></textarea>
-        </div>
-        
-        <div class="form-actions">
-            <button type="submit" name="upload" class="button">Upload</button>
-            <button type="button" id="cancelUpload" class="button button-secondary">Cancel</button>
-        </div>
-    </form>
-</div>
-
-<div class="card">
-    <h2 class="card-title">Document Library</h2>
-    
-    <div class="filter-section">
-        <form method="GET" action="documents.php" class="filter-form">
-            <div class="form-group inline">
-                <label for="client_filter">Filter by Client:</label>
-                <select id="client_filter" name="client" class="form-control" onchange="this.form.submit()">
-                    <option value="0">All Clients</option>
-                    <?php foreach ($clients as $client): ?>
-                        <option value="<?php echo $client['id']; ?>" <?php echo $client_id == $client['id'] ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($client['name']); ?>
-                        </option>
-                    <?php endforeach; ?>
                 </select>
+            </div>
+
+            <div class="form-group">
+                <label for="document_name">Document Name</label>
+                <input type="text" id="document_name" name="name" class="form-control" required>
+            </div>
+
+            <div class="form-group">
+                <label for="document_file">File</label>
+                <input type="file" id="document_file" name="file" class="form-control" required>
+            </div>
+
+            <div class="form-group">
+                <label for="document_description">Description (Optional)</label>
+                <textarea id="document_description" name="description" class="form-control" rows="3"></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" name="upload" class="button">Upload</button>
+                <button type="button" id="cancelUpload" class="button button-secondary">Cancel</button>
             </div>
         </form>
     </div>
-    
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Document Name</th>
-                <th>Type</th>
-                <th>Case</th>
-                <th>Client</th>
-                <th>Uploaded</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php
+
+    <div class="card">
+        <h2 class="card-title">Document Library</h2>
+
+        <div class="filter-section">
+            <form method="GET" action="documents.php" class="filter-form">
+                <div class="form-group inline">
+                    <label for="client_filter">Filter by Client:</label>
+                    <select id="client_filter" name="client" class="form-control" onchange="this.form.submit()">
+                        <option value="0">All Clients</option>
+                        <?php foreach ($clients as $client): ?>
+                        <option value="<?php echo $client['id']; ?>"
+                            <?php echo $client_id == $client['id'] ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($client['name']); ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </form>
+        </div>
+
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Document Name</th>
+                    <th>Type</th>
+                    <th>Case</th>
+                    <th>Client</th>
+                    <th>Uploaded</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php
             if ($documents_result->num_rows === 0) {
                 echo '<tr><td colspan="6" class="no-data">No documents found.</td></tr>';
             } else {
                 while ($document = $documents_result->fetch_assoc()) {
                     ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($document['name']); ?></td>
-                        <td><?php echo htmlspecialchars($document['doc_type_name']); ?></td>
-                        <td><?php echo htmlspecialchars($document['reference_number']); ?></td>
-                        <td><?php echo htmlspecialchars($document['client_name']); ?></td>
-                        <td><?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?></td>
-                        <td>
-                            <a href="download_document.php?id=<?php echo $document['id']; ?>" class="button button-small">Download</a>
-                            <a href="#" class="button button-small button-delete" data-id="<?php echo $document['id']; ?>">Delete</a>
-                        </td>
-                    </tr>
-                    <?php
+                <tr>
+                    <td><?php echo htmlspecialchars($document['name']); ?></td>
+                    <td><?php echo htmlspecialchars($document['doc_type_name']); ?></td>
+                    <td><?php echo htmlspecialchars($document['reference_number']); ?></td>
+                    <td><?php echo htmlspecialchars($document['client_name']); ?></td>
+                    <td><?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?></td>
+                    <td>
+                        <a href="download_document.php?id=<?php echo $document['id']; ?>"
+                            class="button button-small">Download</a>
+                        <a href="#" class="button button-small button-delete"
+                            data-id="<?php echo $document['id']; ?>">Delete</a>
+                    </td>
+                </tr>
+                <?php
                 }
             }
             ?>
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
-
 <?php
 // Include footer
 include_once('includes/footer.php');
-?> 
+?>

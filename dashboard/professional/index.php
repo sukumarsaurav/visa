@@ -115,7 +115,7 @@ while ($row = $result->fetch_assoc()) {
     $upcoming_appointments[] = $row;
 }
 ?>
-
+<div class="content-wrapper">
 <!-- Stats Cards -->
 <div class="stats-container">
     <div class="row">
@@ -253,9 +253,13 @@ while ($row = $result->fetch_assoc()) {
         </div>
     <?php endif; ?>
 </div>
-
+</div>
 <!-- Custom CSS for this page -->
 <style>
+    .content-wrapper {
+        padding: 20px;
+        margin: 0 auto;
+    }
     .stats-container {
         margin-bottom: 30px;
         width: 100%;

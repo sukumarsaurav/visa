@@ -124,6 +124,7 @@ while ($row = $docs_result->fetch_assoc()) {
 }
 $stmt->close();
 ?>
+<div class="content-wrapper">
 
 <!-- Filter and Search Section -->
 <div class="filter-container">
@@ -374,9 +375,13 @@ $stmt->close();
         <?php endif; ?>
     <?php endif; ?>
 </div>
-
+</div>
 <!-- Custom CSS for this page -->
 <style>
+    .content-wrapper {
+        padding: 20px;
+        margin: 0 auto;
+    }
     .filter-container {
         margin-bottom: 20px;
         display: flex;

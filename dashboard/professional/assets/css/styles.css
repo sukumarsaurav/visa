@@ -256,7 +256,10 @@ body {
     margin-left: var(--sidebar-collapsed-width);
     width: calc(100% - var(--sidebar-collapsed-width));
 }
-
+.content-wrapper{
+    padding: 20px;
+    margin: 0 auto;
+}
 /* Responsive Adjustments */
 @media (max-width: 768px) {
     .sidebar {

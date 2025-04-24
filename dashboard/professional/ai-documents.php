@@ -64,6 +64,7 @@ $page_specific_css = '
 ?>
 
 <div class="container">
+<div class="content-wrapper">
     <h1 class="page-title"><?php echo $page_header; ?></h1>
     <p class="section-description">Create custom document templates and auto-fill with your clients information.</p>
     
@@ -86,7 +87,7 @@ $page_specific_css = '
         </div>
     </div>
 </div>
-
+</div>
 <?php
 // Include footer
 include_once('includes/footer.php');

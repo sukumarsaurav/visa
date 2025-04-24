@@ -652,7 +652,7 @@ document.querySelectorAll(".set-availability").forEach(link => {
 include_once('includes/header.php');
 ?>
 
-<h1 class="page-title"><?php echo $page_header; ?></h1>
+
             
 <?php if ($success_message): ?>
     <div class="alert alert-success">
@@ -943,7 +943,6 @@ include_once('includes/header.php');
 <style>
 .content-wrapper {
     padding: 20px;
-    max-width: 1200px;
     margin: 0 auto;
 }
 

@@ -702,7 +702,7 @@ include_once('includes/header.php');
     <?php echo $error_message; ?>
 </div>
 <?php endif; ?>
-
+<div class="content-wrapper">
 <div class="profile-tabs">
     <div class="profile-tab active" data-tab="basic-info">Basic Information</div>
     <div class="profile-tab" data-tab="specializations">Specializations & Languages</div>
@@ -853,7 +853,7 @@ include_once('includes/header.php');
         </form>
     </div>
 </div>
-
+</div>
 <?php
 // Include footer
 include_once('includes/footer.php');
