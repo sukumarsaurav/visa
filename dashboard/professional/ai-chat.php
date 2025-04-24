@@ -31,6 +31,16 @@ $professional_id = $_SESSION['user_id'] ?? 1; // Replace with actual session han
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
+            case 'delete_conversation':
+                $conversation_id = (int)$_POST['conversation_id'];
+                $sql = "UPDATE ai_chat_conversations SET deleted_at = NOW() WHERE id = $conversation_id AND professional_id = $professional_id";
+                if ($db->query($sql)) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    echo json_encode(['success' => false, 'error' => $db->error]);
+                }
+                exit;
+
             case 'get_usage':
                 $month = date('Y-m');
                 $sql = "SELECT message_count FROM ai_chat_usage WHERE professional_id = $professional_id AND month = '$month'";
@@ -41,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
 
             case 'create_conversation':
-                $title = $db->real_escape_string($_POST['title']);
+                $title = "New Chat";  // We'll update this with the first message later
                 $chat_type = $db->real_escape_string($_POST['chat_type']);
                 $sql = "INSERT INTO ai_chat_conversations (professional_id, title, chat_type) VALUES ($professional_id, '$title', '$chat_type')";
                 if ($db->query($sql)) {
@@ -85,6 +95,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                            VALUES ($conversation_id, $professional_id, 'user', '$content')";
                     $db->query($sql);
 
+                    // Update conversation title with first message
+                    $sql = "UPDATE ai_chat_conversations 
+                           SET title = '" . substr($db->real_escape_string($message), 0, 50) . "...'
+                           WHERE id = $conversation_id 
+                           AND (title = 'New Chat' OR title LIKE 'New Chat%')";
+                    $db->query($sql);
+
+                    // Get conversation history
+                    $sql = "SELECT role, content FROM ai_chat_messages 
+                           WHERE conversation_id = $conversation_id 
+                           ORDER BY created_at DESC LIMIT 10";
+                    $result = $db->query($sql);
+                    $history = [];
+                    while ($row = $result->fetch_assoc()) {
+                        array_unshift($history, [
+                            "role" => $row['role'],
+                            "content" => $row['content']
+                        ]);
+                    }
+
                     // Call OpenAI API
                     $ch = curl_init();
                     curl_setopt($ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions');
@@ -95,11 +125,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Authorization: Bearer ' . $api_key
                     ]);
 
+                    $messages = [
+                        ["role" => "system", "content" => "You are a friendly visa and immigration consultant assistant. Provide accurate, helpful information about visa processes, immigration procedures, and related matters. Be clear, professional, and empathetic."]
+                    ];
+                    // Add conversation history
+                    $messages = array_merge($messages, $history);
+
                     $data = [
                         'model' => 'gpt-3.5-turbo',
-                        'messages' => [
-                            ['role' => 'user', 'content' => $message]
-                        ],
+                        'messages' => $messages,
                         'temperature' => 0.7,
                         'max_tokens' => 150
                     ];
@@ -136,8 +170,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get existing conversations
-$sql = "SELECT * FROM ai_chat_conversations WHERE professional_id = $professional_id AND deleted_at IS NULL ORDER BY updated_at DESC";
+// Get existing conversations with their last messages
+$sql = "SELECT c.*, 
+        (SELECT content FROM ai_chat_messages m 
+         WHERE m.conversation_id = c.id 
+         AND m.role = 'user'
+         ORDER BY m.created_at DESC LIMIT 1) as last_message
+        FROM ai_chat_conversations c 
+        WHERE c.professional_id = $professional_id 
+        AND c.deleted_at IS NULL 
+        ORDER BY c.updated_at DESC";
 $conversations = $db->query($sql);
 ?>
 
@@ -163,7 +205,16 @@ $conversations = $db->query($sql);
             <div class="conversations-list">
                 <?php while ($conv = $conversations->fetch_assoc()): ?>
                 <div class="conversation-item" data-id="<?php echo $conv['id']; ?>">
-                    <?php echo htmlspecialchars($conv['title']); ?>
+                    <div class="conversation-text">
+                        <?php echo htmlspecialchars($conv['last_message'] ? 
+                            (strlen($conv['last_message']) > 30 ? 
+                                substr($conv['last_message'], 0, 30) . '...' : 
+                                $conv['last_message']
+                            ) : 
+                            'New Chat'
+                        ); ?>
+                    </div>
+                    <button class="delete-chat" data-id="<?php echo $conv['id']; ?>">×</button>
                 </div>
                 <?php endwhile; ?>
             </div>
@@ -363,6 +414,32 @@ $conversations = $db->query($sql);
             $('#user-input').keypress(function(e) {
                 if (e.which == 13) {
                     sendMessage();
+                }
+            });
+
+            // Delete conversation handling
+            $(document).on('click', '.delete-chat', function(e) {
+                e.stopPropagation(); // Prevent triggering conversation selection
+                const conversationId = $(this).data('id');
+                if (confirm('Are you sure you want to delete this conversation?')) {
+                    $.post('ai-chat.php', {
+                        action: 'delete_conversation',
+                        conversation_id: conversationId
+                    })
+                    .done(function(response) {
+                        const data = JSON.parse(response);
+                        if (data.success) {
+                            $(`.conversation-item[data-id="${conversationId}"]`).remove();
+                            if (currentConversationId === conversationId) {
+                                currentConversationId = null;
+                                $('#chat-messages').empty().append(`
+                                    <div class="message bot">
+                                        Hello! How can I help you today?
+                                    </div>
+                                `);
+                            }
+                        }
+                    });
                 }
             });
         });
