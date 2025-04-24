@@ -26,8 +26,23 @@ function loadEnv($path) {
     }
 }
 
-// Load the .env file
-loadEnv(__DIR__ . '/../../../config/.env');
+// Load the .env file with explicit error checking
+$envPath = __DIR__ . '/../../../config/.env';
+if (!file_exists($envPath)) {
+    error_log("Error: .env file not found at: " . $envPath);
+    echo json_encode(['success' => false, 'error' => 'Configuration file not found']);
+    exit;
+}
+
+loadEnv($envPath);
+
+// Verify API key is loaded
+$api_key = $_ENV['OPENAI_API_KEY'] ?? null;
+if (!$api_key) {
+    error_log("Error: OPENAI_API_KEY not found in environment variables");
+    echo json_encode(['success' => false, 'error' => 'API key not configured']);
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -145,9 +160,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $message = $_POST['message'] ?? '';
                 $conversation_id = (int)$_POST['conversation_id'];
-                $api_key = $_ENV['OPENAI_API_KEY'] ?? null;
 
-                if (!empty($message) && $api_key) {
+                if (!empty($message)) {
                     // Verify conversation exists and belongs to user
                     $sql = "SELECT id, chat_type FROM ai_chat_conversations 
                             WHERE id = ? AND professional_id = ? AND deleted_at IS NULL";
@@ -197,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ]);
                     }
 
-                    // Call OpenAI API
+                    // Call OpenAI API with error handling
                     $ch = curl_init();
                     curl_setopt($ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions');
                     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -207,7 +221,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Authorization: Bearer ' . $api_key
                     ]);
 
-                    // Prepare system message based on chat type
+                    // Enable verbose error reporting
+                    curl_setopt($ch, CURLOPT_VERBOSE, true);
+                    $verbose = fopen('php://temp', 'w+');
+                    curl_setopt($ch, CURLOPT_STDERR, $verbose);
+
+                    // Prepare messages array with system message and history
                     $system_message = $conversation['chat_type'] === 'cases' 
                         ? "You are a legal assistant specializing in Canadian immigration case law. Provide accurate information about immigration cases, precedents, and court decisions. Be precise and professional."
                         : "You are a friendly visa and immigration consultant assistant. Provide accurate, helpful information about Canadian visa processes, IRCC procedures, and immigration requirements. Be clear and professional.";
@@ -224,40 +243,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
                     $response = curl_exec($ch);
-                    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    
+                    if ($response === false) {
+                        rewind($verbose);
+                        $verboseLog = stream_get_contents($verbose);
+                        error_log("cURL Error: " . curl_error($ch) . "\n" . $verboseLog);
+                        echo json_encode([
+                            'success' => false, 
+                            'error' => 'Could not connect to the OpenAI API',
+                            'details' => curl_error($ch)
+                        ]);
+                        curl_close($ch);
+                        break;
+                    }
+
+                    $result = json_decode($response, true);
                     curl_close($ch);
 
-                    if ($http_code === 200) {
-                        $result = json_decode($response, true);
-                        if (isset($result['choices'][0]['message']['content'])) {
-                            $ai_response = $result['choices'][0]['message']['content'];
-                            
-                            // Save AI response
-                            $sql = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
-                                    VALUES (?, ?, 'assistant', ?)";
-                            $stmt = $conn->prepare($sql);
-                            $stmt->bind_param("iis", $conversation_id, $user_id, $ai_response);
-                            if ($stmt->execute()) {
-                                // Update usage
-                                $sql = "INSERT INTO ai_chat_usage (professional_id, month, message_count) 
-                                        VALUES (?, ?, 1)
-                                        ON DUPLICATE KEY UPDATE message_count = message_count + 1";
-                                $stmt = $conn->prepare($sql);
-                                $stmt->bind_param("is", $user_id, $month);
-                                $stmt->execute();
+                    if (isset($result['error'])) {
+                        error_log("OpenAI API Error: " . json_encode($result['error']));
+                        echo json_encode([
+                            'success' => false, 
+                            'error' => $result['error']['message'] ?? 'An unknown error occurred'
+                        ]);
+                        break;
+                    }
 
-                                echo json_encode(['success' => true, 'message' => $ai_response]);
-                            } else {
-                                echo json_encode(['success' => false, 'error' => 'Failed to save AI response']);
-                            }
+                    if (isset($result['choices'][0]['message']['content'])) {
+                        $ai_response = $result['choices'][0]['message']['content'];
+                        
+                        // Save AI response
+                        $sql = "INSERT INTO ai_chat_messages (conversation_id, professional_id, role, content) 
+                                VALUES (?, ?, 'assistant', ?)";
+                        $stmt = $conn->prepare($sql);
+                        $stmt->bind_param("iis", $conversation_id, $user_id, $ai_response);
+                        if ($stmt->execute()) {
+                            // Update usage
+                            $sql = "INSERT INTO ai_chat_usage (professional_id, month, message_count) 
+                                    VALUES (?, ?, 1)
+                                    ON DUPLICATE KEY UPDATE message_count = message_count + 1";
+                            $stmt = $conn->prepare($sql);
+                            $stmt->bind_param("is", $user_id, $month);
+                            $stmt->execute();
+
+                            echo json_encode(['success' => true, 'message' => $ai_response]);
                         } else {
-                            echo json_encode(['success' => false, 'error' => 'Invalid AI response format']);
+                            echo json_encode(['success' => false, 'error' => 'Failed to save AI response']);
                         }
                     } else {
-                        echo json_encode(['success' => false, 'error' => 'Failed to get response from AI service']);
+                        echo json_encode([
+                            'success' => false, 
+                            'error' => 'Invalid response format from AI service',
+                            'response' => $response
+                        ]);
                     }
                 } else {
-                    echo json_encode(['success' => false, 'error' => 'Invalid message or API key not configured']);
+                    echo json_encode(['success' => false, 'error' => 'Message cannot be empty']);
                 }
                 break;
 
